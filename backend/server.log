@@ -1,0 +1,147 @@
+﻿.\.venv\Scripts\python.exe : INFO:     Started server process [21344]
+At line:1 char:334
++ ... on\backend; .\.venv\Scripts\python.exe -m uvicorn app.main:app --host ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO:     Started server process [21344]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO:     Waiting for application startup.
+2026-11-14 14:53:10,239 INFO zeromdr: SoundShare up. provider=razorpay (test) 
+base_url=https://san-frequent-std-world.trycloudflare.com
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:51574 - "GET /healthz HTTP/1.1" 200 OK
+2026-11-14 14:53:11,049 INFO httpx: HTTP Request: GET 
+https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:56733 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /healthz HTTP/1.1" 200 OK
+2026-11-14 14:53:11,637 INFO httpx: HTTP Request: GET 
+https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite "HTTP/1.1 200 OK"
+INFO:     183.82.112.34:0 - "GET /login HTTP/1.1" 200 OK
+2026-11-14 14:53:12,180 INFO httpx: HTTP Request: GET 
+https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-lite-tts "HTTP/1.1 200 OK"
+2026-11-14 14:53:12,186 INFO zeromdr: Gemini model gemini-3.8-flash: ok
+2026-11-14 14:53:12,186 INFO zeromdr: Gemini model gemini-3.5-flash-lite: ok
+2026-11-14 14:53:12,186 INFO zeromdr: Gemini model gemini-3.8-flash-lite-tts: ok
+INFO:     183.82.112.34:0 - "GET /merchant HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /sim/?device=SB-E1C0&token=h9gxIdylCbJFyvB0DWwhp66P HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/chime.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /sim/?device=SB-E1C0&token=h9gxIdylCbJFyvB0DWwhp66P HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /favicon.ico HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     ('183.82.112.34', 0) - "WebSocket /ws/device/SB-E1C0?token=h9gxIdylCbJFyvB0DWwhp66P" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59093 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/chime.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/pre.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/thousand.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/hundred.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n2.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/lakh.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/rupees.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/received.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n7.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n15.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n11.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n13.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n8.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n14.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n1.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n5.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n4.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n16.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n20.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n6.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n0.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/crore.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n23.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n17.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n21.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n12.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n26.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n22.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n28.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n29.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n30.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n18.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n27.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n9.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n24.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n40.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n33.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n19.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n44.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n34.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n51.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n25.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n48.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n3.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n50.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n35.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n43.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n36.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n54.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n45.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n52.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n41.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n10.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n37.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n38.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n31.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n49.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n58.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n60.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n42.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n71.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n56.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n66.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n69.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n62.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n72.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n68.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n76.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n63.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n64.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n55.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n73.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n74.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n81.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n78.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n79.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n80.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n84.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n92.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n86.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n98.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n96.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n46.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n83.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n67.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n87.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n32.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n57.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n88.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n82.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n95.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n61.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n75.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n70.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/audio/1f45fa2424f1ae6f9ccacd2040ecb0608adb025f.mp3 HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/audio/909dd6b7431b1b915b860411ecb88626a05b55a9.mp3 HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n65.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n94.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n90.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n97.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n93.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n77.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n53.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n59.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n89.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n85.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n99.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n39.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n91.wav HTTP/1.1" 200 OK
+INFO:     183.82.112.34:0 - "GET /media/clips/en/n47.wav HTTP/1.1" 200 OK

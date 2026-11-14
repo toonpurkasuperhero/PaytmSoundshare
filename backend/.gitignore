@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+media/audio/*.mp3
+.env
+.pytest_cache/

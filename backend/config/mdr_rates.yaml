@@ -1,0 +1,45 @@
+# MDR rate card used by the SoundShare engine.
+#
+# These numbers are CONFIGURABLE ASSUMPTIONS for the prototype. Replace them with
+# the acquirer's actual commercial rates before production.
+#
+# Semantics: the slab is chosen by the TRANSACTION amount, and the slab rate applies
+# to the whole amount (not marginally), which is how MDR is charged per transaction.
+# `upto_paise: null` means no upper bound. GST is charged on the MDR itself.
+
+gst_rate: "0.18"
+
+rails:
+  UPI_BANK:
+    label: "UPI (bank account)"
+    slabs:
+      - { upto_paise: 200000, rate: "0.000" }
+      - { upto_paise: null,   rate: "0.004" }
+  UPI_RUPAY_CC:
+    label: "RuPay credit card on UPI"
+    slabs:
+      - { upto_paise: 200000, rate: "0.000" }
+      - { upto_paise: null,   rate: "0.018" }
+  UPI_PPI:
+    label: "Wallet / PPI"
+    slabs:
+      - { upto_paise: 200000, rate: "0.000" }
+      - { upto_paise: null,   rate: "0.011" }
+  DEBIT_CARD:
+    label: "Debit card"
+    slabs:
+      - { upto_paise: 200000, rate: "0.004" }
+      - { upto_paise: null,   rate: "0.009" }
+  CREDIT_CARD:
+    label: "Credit card"
+    slabs:
+      - { upto_paise: null,   rate: "0.018" }
+  NET_BANKING:
+    label: "Net banking"
+    slabs:
+      - { upto_paise: null,   rate: "0.012" }
+  UNKNOWN:
+    label: "Unknown rail (charged conservatively)"
+    slabs:
+      - { upto_paise: 200000, rate: "0.000" }
+      - { upto_paise: null,   rate: "0.018" }

@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soundbox Simulator</title>
+<style>
+  :root {
+    --navy: #002E6E; --sky: #00BAF2; --ok: #00B386; --bad: #E5484D; --ink: #0F172A; --muted: #64748B;
+    --bg: #EEF3F9; --card: #FFFFFF; --line: #D9E2EC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --ink: #E2E8F0; --muted: #94A3B8; --bg: #0B1220; --card: #111A2E; --line: #23304A; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex-wrap: wrap; }
+  header h1 { font-size: 1.05rem; margin: 0; }
+  .pill { font-size: .78rem; padding: 3px 10px; border-radius: 999px; background: var(--line); }
+  .pill.on { background: var(--ok); color: #fff; } .pill.off { background: var(--bad); color: #fff; }
+  main { display: grid; grid-template-columns: minmax(0, 520px) minmax(0, 1fr); gap: 16px; padding: 0 16px 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  /* The device */
+  .device { background: linear-gradient(160deg, #e8f6fd, #c9e9f7); border-radius: 28px; padding: 18px; box-shadow: 0 12px 30px rgba(0,46,110,.18); }
+  .brand { display: flex; justify-content: space-between; align-items: center; color: var(--navy); font-weight: 800; margin: 0 6px 10px; }
+  .brand small { font-weight: 600; opacity: .7; }
+  .screen { position: relative; width: 100%; aspect-ratio: 480 / 320; background: #fff; color: #0F172A; border-radius: 12px; overflow: hidden; border: 6px solid #0b1b33; }
+  .view { position: absolute; inset: 0; padding: 4% 5%; display: none; flex-direction: column; }
+  .view.active { display: flex; }
+  .grille { display: flex; gap: 6px; justify-content: center; margin-top: 12px; }
+  .grille i { width: 6px; height: 6px; border-radius: 50%; background: #0b1b33; opacity: .55; }
+  .grille.speaking i { animation: pulse .35s infinite alternate; }
+  @keyframes pulse { to { transform: scale(1.8); opacity: 1; background: var(--sky); } }
+
+  .idle { justify-content: center; align-items: center; text-align: center; transition: background .4s; }
+  .idle .mname { font-size: clamp(14px, 3.4vw, 22px); font-weight: 800; }
+  .idle .btitle { font-size: clamp(18px, 5vw, 34px); font-weight: 900; margin-top: 6%; }
+  .idle .bsub { font-size: clamp(12px, 2.8vw, 18px); margin-top: 2%; }
+  .idle .hint { position: absolute; bottom: 4%; font-size: 11px; opacity: .6; }
+
+  h2.vt { margin: 0 0 3%; font-size: clamp(13px, 3vw, 20px); color: var(--navy); }
+  table.bill { width: 100%; border-collapse: collapse; font-size: clamp(11px, 2.3vw, 15px); }
+  table.bill td { padding: 1.2% 0; border-bottom: 1px dashed #cbd5e1; }
+  table.bill td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .total { margin-top: auto; display: flex; justify-content: space-between; font-weight: 900; font-size: clamp(14px, 3.4vw, 22px); }
+
+  .legs { display: flex; gap: 3%; margin-top: 2%; }
+  .leg { flex: 1; border: 2px solid var(--sky); border-radius: 10px; padding: 3%; font-size: clamp(10px, 2.2vw, 14px); }
+  .leg b { display: block; font-size: clamp(14px, 3.3vw, 22px); margin-top: 4%; }
+  .note { margin-top: auto; font-size: clamp(9px, 1.9vw, 12px); color: #475569; }
+
+  .pay { flex-direction: row !important; gap: 4%; align-items: center; }
+  .pay img { height: 92%; aspect-ratio: 1; background: #fff; }
+  .pay .pinfo { flex: 1; display: flex; flex-direction: column; gap: 4%; }
+  .pay .amt { font-size: clamp(18px, 5vw, 34px); font-weight: 900; }
+  .pay .legtag { background: var(--navy); color: #fff; border-radius: 999px; padding: 2px 10px; align-self: flex-start; font-size: clamp(10px, 2vw, 13px); }
+  .pay .exp { color: #475569; font-size: clamp(10px, 2vw, 13px); }
+
+  .ok { background: #F0FFF9; }
+  .ok .head { display: flex; align-items: center; gap: 3%; }
+  .ok .tick { width: 13%; aspect-ratio: 1; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; font-size: clamp(16px, 4vw, 28px); font-weight: 900; }
+  .ok .amt { font-size: clamp(18px, 5vw, 34px); font-weight: 900; }
+  .ok .settle { margin-top: 2%; font-size: clamp(10px, 2.1vw, 13px); background: #fff; border: 1px solid #b7ebd9; border-radius: 8px; padding: 2% 3%; }
+  .ok .banner { margin-top: auto; border-radius: 10px; padding: 2.5% 3%; display: flex; align-items: center; gap: 3%; }
+  .ok .banner img { height: clamp(44px, 12vw, 74px); background: #fff; border-radius: 6px; padding: 2px; }
+  .ok .banner .bt { font-weight: 900; font-size: clamp(12px, 2.8vw, 18px); }
+  .ok .banner .bs { font-size: clamp(10px, 2.1vw, 13px); }
+
+  .fail { background: #FFF5F5; justify-content: center; align-items: center; text-align: center; }
+  .fail .x { font-size: clamp(28px, 8vw, 54px); color: var(--bad); font-weight: 900; }
+  .toast { position: absolute; top: 4%; right: 4%; background: var(--ok); color: #fff; padding: 1.5% 3%; border-radius: 8px; font-size: clamp(10px, 2.2vw, 14px); opacity: 0; transition: opacity .3s; }
+  .toast.show { opacity: 1; }
+
+  /* Side panel */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .panel h3 { margin: 0; font-size: .95rem; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, input, button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  button { background: var(--navy); color: #fff; border: 0; cursor: pointer; font-weight: 600; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #log { font: 12px/1.45 ui-monospace, Consolas, monospace; background: var(--bg); border-radius: 8px; padding: 8px; height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  #unlock { position: fixed; inset: 0; background: rgba(0,20,50,.75); display: grid; place-items: center; z-index: 9; }
+  #unlock button { font-size: 1.1rem; padding: 14px 22px; background: var(--sky); color: #001; }
+</style>
+</head>
+<body>
+<div id="unlock"><button id="unlockBtn">Tap to power on the Soundbox (enables audio)</button></div>
+<header>
+  <h1>Soundbox Simulator</h1>
+  <span class="pill" id="devPill">DEV1</span>
+  <span class="pill off" id="connPill">offline</span>
+  <span class="muted" id="merchantName"></span>
+</header>
+<main>
+  <section>
+    <div class="device">
+      <div class="brand"><span>paytm <small>SoundShare Soundbox</small></span><small id="clock"></small></div>
+      <div class="screen">
+        <div class="view idle active" id="v-idle">
+          <div class="mname" id="idleMerchant">Connecting…</div>
+          <div class="btitle" id="idleTitle"></div>
+          <div class="bsub" id="idleSub"></div>
+          <div class="hint">Scan &amp; pay with any UPI app</div>
+        </div>
+        <div class="view" id="v-bill">
+          <h2 class="vt">Your bill</h2>
+          <table class="bill"><tbody id="billRows"></tbody></table>
+          <div class="total"><span>Total</span><span id="billTotal"></span></div>
+        </div>
+        <div class="view" id="v-split">
+          <h2 class="vt">Compliance-safe split</h2>
+          <div class="legs" id="splitLegs"></div>
+          <div class="total"><span>You pay</span><span id="splitTotal"></span></div>
+          <div class="note" id="splitNote"></div>
+        </div>
+        <div class="view pay" id="v-pay">
+          <img id="qrImg" alt="Payment QR">
+          <div class="pinfo">
+            <span class="legtag" id="payLeg"></span>
+            <div class="amt" id="payAmt"></div>
+            <div>Scan with any UPI app</div>
+            <div class="exp" id="payExp"></div>
+          </div>
+        </div>
+        <div class="view ok" id="v-ok">
+          <div class="head"><div class="tick">✓</div><div><div class="amt" id="okAmt"></div><div>received on Paytm</div></div></div>
+          <div class="settle" id="okSettle"></div>
+          <div class="banner" id="okBanner"></div>
+        </div>
+        <div class="view fail" id="v-fail"><div class="x">✕</div><div id="failMsg"></div></div>
+        <div class="toast" id="toast"></div>
+      </div>
+      <div class="grille" id="grille"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+  </section>
+  <section class="panel">
+    <h3>Customer (mock payments)</h3>
+    <div class="row">
+      <select id="rail">
+        <option value="UPI_BANK">UPI (bank account)</option>
+        <option value="UPI_RUPAY_CC">RuPay credit card on UPI</option>
+        <option value="UPI_PPI">Wallet / PPI</option>
+        <option value="DEBIT_CARD">Debit card</option>
+        <option value="CREDIT_CARD">Credit card</option>
+        <option value="NET_BANKING">Net banking</option>
+      </select>
+      <input id="payer" placeholder="payer VPA (optional)" size="22">
+      <button id="payBtn" disabled>Pay current QR</button>
+    </div>
+    <div class="muted" id="provNote">Mock buttons work when the backend runs with PAYMENT_PROVIDER=mock. With Paytm or Razorpay, scan the QR with a phone.</div>
+    <div class="row">
+      <label class="muted"><input type="checkbox" id="mic" checked> Simulate mic proof-of-play</label>
+      <button class="ghost" id="clearLog">Clear log</button>
+    </div>
+    <h3>Device log</h3>
+    <div id="log"></div>
+  </section>
+</main>
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const DEVICE = qs.get("device") || "";
+  const TOKEN = qs.get("token") || "";
+  if (!DEVICE || !TOKEN) {
+    document.body.innerHTML = '<p style="font:16px system-ui;padding:24px">Open this simulator from <b>Merchant → Devices → Pair new Soundbox</b>. The link carries the device id and its token.</p>';
+    return;
+  }
+  const $ = (id) => document.getElementById(id);
+  const cache = new Set();
+  let ws, current = { legId: null }, banners = [], bannerIdx = 0, idleTimer = null, provider = "mock";
+  let audioCtx, analyser;
+
+  $("devPill").textContent = DEVICE;
+  const inr = (p) => {
+    const neg = p < 0; p = Math.abs(p);
+    const r = Math.floor(p / 100), ps = String(p % 100).padStart(2, "0");
+    let s = String(r);
+    if (s.length > 3) { const t = s.slice(-3); let h = s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ","); s = h + "," + t; }
+    return (neg ? "-" : "") + "₹" + s + (ps === "00" ? "" : "." + ps);
+  };
+  const log = (dir, obj) => {
+    const line = `${new Date().toLocaleTimeString()} ${dir} ${typeof obj === "string" ? obj : JSON.stringify(obj)}`;
+    const el = $("log"); el.textContent += line + "\n"; el.scrollTop = el.scrollHeight;
+  };
+  const show = (id) => { document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === id)); };
+  const toast = (t) => { const el = $("toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2200); };
+  const send = (m) => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); if (m.type !== "pong") log("→", m); } };
+  setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }, 1000);
+
+  fetch("/api/config").then(r => r.json()).then(c => {
+    provider = c.provider;
+    $("provNote").textContent = provider === "mock"
+      ? "Test mode (PAYMENT_PROVIDER=mock): no real money moves. Use the button to simulate the customer paying."
+      : `Provider: ${provider}. Scan the QR with a phone; mock pay is disabled.`;
+  }).catch(() => {});
+
+  function idle() {
+    clearTimeout(idleTimer);
+    current = { legId: null }; $("payBtn").disabled = true;
+    show("v-idle"); rotateBanner();
+  }
+  function rotateBanner() {
+    const v = $("v-idle");
+    if (!banners.length) { v.style.background = "#fff"; v.style.color = "#0F172A"; $("idleTitle").textContent = ""; $("idleSub").textContent = ""; return; }
+    const b = banners[bannerIdx++ % banners.length];
+    v.style.background = b.bg; v.style.color = b.fg;
+    $("idleTitle").textContent = b.title; $("idleSub").textContent = b.subtitle;
+  }
+  setInterval(() => { if ($("v-idle").classList.contains("active")) rotateBanner(); }, 5000);
+
+  // ---- audio engine (same behaviour as the ESP32):
+  //  1. announcement = the device's own WAV clips (chime, "Received", amount, "rupees", "on Paytm"),
+  //     scheduled back-to-back on one AudioContext so they are gapless;
+  //  2. then the ad, decoded from this server (same origin) and measured for peak/RMS level;
+  //  3. play_ack ALWAYS goes back (ms 0 on any failure) so the hold is settled immediately.
+  const bufCache = new Map();
+  let merchantLang = "en";
+  function ctx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+      analyser.connect(audioCtx.destination);
+    }
+    return audioCtx;
+  }
+  // Media URLs are absolute (built for the ESP32); fetch them from this page's own origin.
+  const localPath = (u) => { try { const x = new URL(u, location.href); return x.pathname + x.search; } catch { return u; } };
+  const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out`)), ms))]);
+  function loadBuf(path) {
+    if (bufCache.has(path)) return bufCache.get(path);
+    const p = fetch(path).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status} for ${path}`); return r.arrayBuffer(); })
+      .then(b => ctx().decodeAudioData(b));
+    bufCache.set(path, p);
+    p.catch(() => bufCache.delete(path));
+    return p;
+  }
+  const clipPath = (lang, t) => `/media/clips/${lang}/${t}.wav`;
+  async function clip(lang, t) {
+    try { return await loadBuf(clipPath(lang, t)); }
+    catch { try { return await loadBuf(clipPath("en", t)); } catch { log("!", `missing clip ${lang}/${t}`); return null; } }
+  }
+  function preloadClips(lang) {
+    const toks = ["chime", "pre", "rupees", "received", "hundred", "thousand", "lakh", "crore"];
+    for (let i = 0; i < 100; i++) toks.push("n" + i);
+    toks.forEach(t => loadBuf(clipPath(lang, t)).catch(() => {}));
+  }
+  async function playAnnouncement(tokens, lang) {
+    const bufs = (await Promise.all((tokens || []).map(t => clip(lang, t)))).filter(Boolean);
+    const c = ctx();
+    if (c.state === "suspended") await c.resume();
+    let at = c.currentTime + 0.05;
+    for (const b of bufs) { const s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(at); at += b.duration; }
+    await new Promise(r => setTimeout(r, Math.max(0, (at - c.currentTime) * 1000) + 60));
+  }
+  async function playAd(ad) {
+    const fail = (why) => { log("!", "ad not played: " + why); return { ms: 0, peakDb: null, rmsDb: null }; };
+    let buf;
+    try { buf = await withTimeout(loadBuf(localPath(ad.url)), 8000, "ad download"); }
+    catch (e) { return fail(e.message); }
+    const c = ctx();
+    if (c.state === "suspended") { try { await c.resume(); } catch {} }
+    if (c.state !== "running") return fail("audio is blocked by the browser; tap the page once");
+    return await new Promise((res) => {
+      const s = c.createBufferSource(); s.buffer = buf; s.connect(analyser);
+      const tbuf = new Float32Array(analyser.fftSize);
+      let peak = 0, sumSq = 0, n = 0;
+      const meter = setInterval(() => {  // setInterval keeps running in background tabs (rAF doesn't)
+        analyser.getFloatTimeDomainData(tbuf);
+        for (const x of tbuf) { const ax = Math.abs(x); if (ax > peak) peak = ax; sumSq += x * x; n++; }
+      }, 40);
+      const t0 = performance.now();
+      let finished = false;
+      const done = () => {
+        if (finished) return; finished = true;
+        clearInterval(meter);
+        const db = (v) => v > 0 ? Math.round(20 * Math.log10(v) * 10) / 10 : -120;
+        res({ ms: Math.round(performance.now() - t0), peakDb: db(peak), rmsDb: db(Math.sqrt(sumSq / Math.max(1, n))) });
+      };
+      s.onended = done;
+      setTimeout(done, buf.duration * 1000 + 3000);  // safety net
+      s.start();
+    });
+  }
+  async function onSuccess(m) {
+    current = { legId: null }; $("payBtn").disabled = true;
+    $("okAmt").textContent = inr(m.amount);
+    const s = m.settlement || {};
+    const by = (s.coveredBy || []).map(x => `${x.name} ${inr(x.amount)}`).join(" + ");
+    $("okSettle").innerHTML = s.mdr
+      ? `Payment fee <b>${inr(s.mdr)}</b> covered <b>${s.coveragePct}%</b>${by ? " by " + by : ""}<br>Merchant receives <b>${inr(s.merchantReceives)}</b> · you paid no surcharge`
+      : `No payment fee on this bill. Merchant receives <b>${inr(s.merchantReceives ?? m.amount)}</b>`;
+    const bn = $("okBanner");
+    if (m.banner) {
+      bn.style.display = "flex"; bn.style.background = m.banner.bg; bn.style.color = m.banner.fg;
+      bn.innerHTML = (m.offerQr ? `<img src="/api/qr.svg?scale=4&data=${encodeURIComponent(m.offerQr)}" alt="Offer QR">` : "")
+        + `<div><div class="bt">${esc(m.banner.title)}</div><div class="bs">${esc(m.banner.subtitle)}</div>`
+        + `<div class="bs" style="color:${m.banner.accent};font-weight:700">${esc(m.banner.cta || "")}</div></div>`;
+    } else bn.style.display = "none";
+    show("v-ok");
+    // One speaker: payments are announced strictly one after another, never on top of each other.
+    audioQueue = audioQueue.then(() => playPaymentAudio(m)).catch(e => log("!", String(e)));
+  }
+  let audioQueue = Promise.resolve();
+  // The counter ad: starts as the QR goes up (customer is paying). It joins the same queue, so a
+  // payment message that arrives meanwhile is played only after the ad finishes.
+  function onPlayAd(m) {
+    if (!m.ad || !m.playId) return;
+    audioQueue = audioQueue.then(async () => {
+      $("grille").classList.add("speaking");
+      let r;
+      try { r = await playAd(m.ad); } catch (e) { r = { ms: 0, peakDb: null, rmsDb: null }; log("!", String(e)); }
+      if (!$("mic").checked) r.peakDb = null;
+      send({ type: "play_ack", playId: m.playId, ms: r.ms, peakDb: r.peakDb, rmsDb: r.rmsDb });
+      $("grille").classList.remove("speaking");
+    }).catch(e => log("!", String(e)));
+  }
+  async function playPaymentAudio(m) {
+    clearTimeout(idleTimer);
+    $("grille").classList.add("speaking");
+    // Prefer the full-sentence announcement in the merchant's language (Sarvam voice);
+    // fall back to the local en/hi clips, exactly like the ESP32 does.
+    let spoken = false;
+    if (m.announceUrl) {
+      try {
+        const buf = await withTimeout(loadBuf(localPath(m.announceUrl)), 6000, "announcement");
+        const c = ctx();
+        if (c.state === "suspended") await c.resume();
+        const s = c.createBufferSource(); s.buffer = buf; s.connect(c.destination);
+        await new Promise(r => { s.onended = r; s.start(); setTimeout(r, buf.duration * 1000 + 1500); });
+        spoken = true;
+      } catch (e) { log("!", "full announcement unavailable, using clips: " + e.message); }
+    }
+    if (!spoken) {
+      try { await playAnnouncement(m.announce, (m.lang === "hi" ? "hi" : "en")); }
+      catch (e) { log("!", "announcement failed: " + e.message); }
+    }
+    if (m.ad && m.playId) {
+      await new Promise(r => setTimeout(r, 250));  // short beat between announcement and ad
+      let r;
+      try { r = await playAd(m.ad); } catch (e) { r = { ms: 0, peakDb: null, rmsDb: null }; log("!", String(e)); }
+      if (!$("mic").checked) r.peakDb = null;
+      send({ type: "play_ack", playId: m.playId, ms: r.ms, peakDb: r.peakDb, rmsDb: r.rmsDb });
+    }
+    $("grille").classList.remove("speaking");
+    idleTimer = setTimeout(idle, 20000);
+  }
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function handle(m) {
+    if (m.type !== "ping") log("←", m);
+    switch (m.type) {
+      case "ping": send({ type: "pong" }); break;
+      case "hello_ack":
+        $("merchantName").textContent = m.merchant.name; $("idleMerchant").textContent = m.merchant.name;
+        merchantLang = m.merchant.lang || "en";
+        preloadClips(merchantLang === "hi" ? "hi" : "en"); break;  // local fallback clip packs: en/hi
+      case "idle": banners = m.banners || []; if ($("v-idle").classList.contains("active")) rotateBanner(); break;
+      case "cache_audio":
+        if (!cache.has(m.hash)) loadBuf(localPath(m.url))
+          .then(() => { cache.add(m.hash); send({ type: "cache_ok", hash: m.hash }); })
+          .catch(e => log("!", "cache failed: " + e.message));
+        break;
+      case "show_bill":
+        clearTimeout(idleTimer);
+        $("billRows").innerHTML = m.items.map(i => `<tr><td>${i.qty > 1 ? i.qty + " × " : ""}${esc(i.name)}</td><td>${inr(i.amount)}</td></tr>`).join("");
+        $("billTotal").textContent = inr(m.total); show("v-bill"); break;
+      case "show_split":
+        $("splitLegs").innerHTML = m.legs.map(l => `<div class="leg">Leg ${l.seq}<br>${esc(l.label)}<b>${inr(l.amount)}</b></div>`).join("");
+        $("splitTotal").textContent = inr(m.total); $("splitNote").textContent = m.note || "";
+        setTimeout(() => show("v-split"), 1200); break;
+      case "show_qr": {
+        current = { legId: m.legId, expiresAt: m.expiresAt };
+        $("qrImg").src = `/api/qr.svg?scale=6&data=${encodeURIComponent(m.qrData || "")}`;
+        $("payAmt").textContent = inr(m.amount);
+        $("payLeg").textContent = m.of > 1 ? `Leg ${m.seq} of ${m.of}` : "Scan to pay";
+        $("payBtn").disabled = provider !== "mock";
+        const delay = $("v-bill").classList.contains("active") || $("v-split").classList.contains("active") ? 3200 : 0;
+        setTimeout(() => { if (current.legId === m.legId) show("v-pay"); }, delay);
+        break;
+      }
+      case "leg_paid": toast(`Leg ${m.seq}/${m.of} paid · ${inr(m.amount)}`); break;
+      case "play_ad": onPlayAd(m); break;
+      case "payment_success": onSuccess(m); break;
+      case "payment_failed": $("failMsg").textContent = `Payment ${m.reason}`; show("v-fail"); idleTimer = setTimeout(idle, 6000); break;
+      case "cancelled": $("failMsg").textContent = "Bill cancelled"; show("v-fail"); idleTimer = setTimeout(idle, 4000); break;
+      case "replaced": replaced = true; break;
+    }
+  }
+
+  setInterval(() => {
+    if (!current.expiresAt || !$("v-pay").classList.contains("active")) return;
+    const s = Math.max(0, current.expiresAt - Math.floor(Date.now() / 1000));
+    $("payExp").textContent = `QR expires in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }, 500);
+  setInterval(() => send({ type: "heartbeat", fw: "sim-0.1.0", rssi: -55, heap: 0 }), 30000);
+
+  let replaced = false;
+  function showTakeover() {
+    if (document.getElementById("takeover")) return;
+    const d = document.createElement("div");
+    d.id = "takeover";
+    d.style.cssText = "position:fixed;inset:0;background:rgba(0,20,50,.8);display:grid;place-items:center;z-index:9;color:#fff;font:16px system-ui;text-align:center;padding:16px";
+    d.innerHTML = '<div><p style="max-width:420px">This Soundbox is open in another window or device, so this window is silent to avoid double announcements.</p>' +
+      '<button style="font-size:1rem;padding:12px 18px;border-radius:8px;border:0;background:#00BAF2;color:#001;font-weight:700;cursor:pointer">Use this window instead</button></div>';
+    d.querySelector("button").onclick = async () => {
+      d.remove(); replaced = false;
+      try { await ctx().resume(); } catch {}
+      connect();
+    };
+    document.body.appendChild(d);
+  }
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/device/${encodeURIComponent(DEVICE)}?token=${encodeURIComponent(TOKEN)}`);
+    ws.onopen = () => { $("connPill").textContent = "online"; $("connPill").className = "pill on"; send({ type: "hello", fw: "sim-0.1.0", cache: [...cache] }); };
+    ws.onmessage = (e) => { try { handle(JSON.parse(e.data)); } catch (err) { log("!", String(err)); } };
+    ws.onclose = (e) => {
+      $("connPill").textContent = "offline"; $("connPill").className = "pill off";
+      if (replaced || e.code === 4000) {  // another window took over this Soundbox: stay quiet
+        if (audioCtx) audioCtx.suspend();
+        log("!", "This Soundbox is now connected from another window or device; this window is silent.");
+        showTakeover();
+        return;
+      }
+      log("!", `disconnected (${e.code}); retrying`); setTimeout(connect, 2000);
+    };
+  }
+
+  $("payBtn").onclick = async () => {
+    if (!current.legId) return;
+    $("payBtn").disabled = true;
+    const body = { leg_id: current.legId, rail: $("rail").value, device_token: TOKEN };
+    if ($("payer").value.trim()) body.payer = $("payer").value.trim();
+    const r = await fetch("/api/mock/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { log("!", `mock pay failed: ${r.status} ${await r.text()}`); $("payBtn").disabled = false; }
+  };
+  $("clearLog").onclick = () => { $("log").textContent = ""; };
+  $("unlockBtn").onclick = async () => {
+    $("unlock").remove();
+    try { await ctx().resume(); } catch (e) { log("!", "audio unavailable: " + e); }
+    connect();
+  };
+  // If the browser suspends audio later (tab in background, OS sleep), any tap resumes it.
+  document.addEventListener("pointerdown", () => { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); });
+})();
+</script>
+</body>
+</html>

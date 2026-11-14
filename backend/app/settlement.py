@@ -1,6 +1,6 @@
 """SoundShare settlement engine: one bill -> one QR -> payment -> counter ad money -> merchant earnings.
 
-    create_order -> QR shown (+ counter ad starts) -> confirm_leg -> begin_settlement
+    create_order -> QR shown (counter ad reserved) -> confirm_leg -> begin_settlement
       -> payment_success on device -> play_ack / timeout -> finalize
 
 Money flow for each paid bill:
@@ -170,11 +170,11 @@ def create_order(db: Session, merchant_id: str, items_in: list[dict], device_id:
 
 
 def _reserve_counter_ad(db: Session, order: Order, merchant: Merchant) -> dict | None:
-    """Pick the counter ad as the QR goes up (the customer is at the counter, about to pay).
+    """Pick (and reserve the money for) the counter ad as the QR goes up. Nothing plays yet.
 
-    Normal hours: a full ad, sent now so it plays WHILE the customer pays; the payment message
-    waits for it. Charged only if it played fully AND the bill was then paid (customer present).
-    Busy hour: only a short sponsor tag, played after the payment message, at the lower tag price.
+    Both formats play AFTER the payment message, so the customer always hears "payment received" first:
+    normal hours = the full ad; busy hour = only a short sponsor tag, at the lower tag price.
+    Charged only if the bill is paid and the Soundbox confirms the play.
     """
     if not order.device_id or adx.in_quiet_hours(merchant):
         return None
@@ -190,13 +190,7 @@ def _reserve_counter_ad(db: Session, order: Order, merchant: Merchant) -> dict |
     db.flush()
     if fmt == "tag":
         tags.prewarm(c.advertiser.name, merchant.lang)
-        return None
-    hold.sent_at = utcnow()
-    return {"type": "play_ad", "orderId": order.id, "playId": hold.id,
-            "ad": {"hash": cr.audio_hash, "url": device_url(order.device_id, f"/media/audio/{cr.audio_hash}.mp3"),
-                   "durationMs": cr.duration_ms or 0, "advertiser": c.advertiser.name},
-            "banner": cr.banner,
-            "offerQr": public_url(order.device_id, f"/api/offers/{cr.id}/claim?d={order.device_id}")}
+    return None
 
 
 def _release_open_holds(db: Session, order_id_: str, reason: str) -> None:
@@ -286,17 +280,16 @@ def _begin_settlement(db: Session, order: Order, merchant: Merchant, out: Outbox
     counter = db.scalars(select(Hold).where(Hold.order_id == order.id, Hold.kind.in_(("audio", "tag")),
                                             Hold.status == "reserved")).first()
     camp: Campaign | None = counter.campaign if counter else None
-    tag_clip = None
+    tag_clip = ad_clip = None
     if counter and deny:  # no ad money from self-payments
         counter.status, counter.release_reason, counter.resolved_at = "released", "self_dealing", utcnow()
         counter, camp = None, None
     elif counter and counter.kind == "audio":
-        if counter.verified:  # played fully while the customer paid -> charge now
-            _commit_hold(db, counter, f"Verified ad play during payment: {camp.advertiser.name}")
-        elif not counter.sent_at:  # device was offline when the QR went up: nothing played
-            counter.status, counter.release_reason, counter.resolved_at = "released", "not_played", utcnow()
-            counter, camp = None, None
-        # else: still playing -> its play_ack settles it, then the payment message plays
+        # Normal hours: the full ad plays right after the payment message; its play_ack settles it.
+        cr = camp.creative
+        counter.sent_at = utcnow()
+        ad_clip = {"hash": cr.audio_hash, "url": device_url(order.device_id, f"/media/audio/{cr.audio_hash}.mp3"),
+                   "durationMs": cr.duration_ms or 0, "advertiser": camp.advertiser.name, "kind": "ad"}
     elif counter and counter.kind == "tag":
         try:
             h_, dur = tags.ensure(camp.advertiser.name, merchant.lang)
@@ -323,8 +316,8 @@ def _begin_settlement(db: Session, order: Order, merchant: Merchant, out: Outbox
         cr = camp.creative
         msg["banner"] = cr.banner
         msg["offerQr"] = public_url(order.device_id, f"/api/offers/{cr.id}/claim?d={order.device_id or ''}")
-        if tag_clip:  # busy hour: the sponsor tag plays right after the payment message
-            msg["playId"], msg["ad"] = counter.id, tag_clip
+        if ad_clip or tag_clip:  # plays right after the payment message
+            msg["playId"], msg["ad"] = counter.id, ad_clip or tag_clip
     out.msgs.append(msg)
     out.events.append(("order_update", {"order_id": order.id, "status": "paid"}))
 
@@ -381,7 +374,7 @@ def play_ack(device_id: str, msg: dict) -> None:
         ok = ms >= need and (peak is None or float(peak) > MIC_NOISE_FLOOR_DB)
         order = db.get(Order, hold.order_id)
         paid = order.status in ("paid", "settled")
-        what = "sponsor tag" if hold.kind == "tag" else "ad play during payment"
+        what = "sponsor tag" if hold.kind == "tag" else "ad after payment"
         if not ok:
             hold.status, hold.release_reason, hold.resolved_at = "released", "play_not_verified", utcnow()
         elif paid:
@@ -396,12 +389,14 @@ def play_ack(device_id: str, msg: dict) -> None:
 
 
 def release_stale_holds() -> None:
-    cutoff = utcnow() - timedelta(seconds=settings.play_ack_timeout_s)
+    now = utcnow()
+    cutoff = now - timedelta(seconds=settings.play_ack_timeout_s)
     with money_lock, session_scope() as db:
-        # Only plays actually sent to a device and never confirmed. A verified play waiting for the
-        # customer's payment, or a sponsor tag not yet sent, is not stale.
-        stale = db.scalars(select(Hold).where(Hold.status == "reserved", Hold.verified.is_(False),
-                                              Hold.sent_at.is_not(None), Hold.sent_at < cutoff)).all()
+        # Only plays actually sent to a device and never confirmed. The device plays the payment
+        # message first, then the clip, so allow for both before calling a play stale.
+        sent = db.scalars(select(Hold).where(Hold.status == "reserved", Hold.verified.is_(False),
+                                             Hold.sent_at.is_not(None), Hold.sent_at < cutoff)).all()
+        stale = [h for h in sent if h.sent_at < cutoff - timedelta(milliseconds=(h.duration_ms or 0) + 8000)]
         if not stale:
             return
         out = Outbox()

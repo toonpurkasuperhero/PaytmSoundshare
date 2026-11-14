@@ -64,7 +64,7 @@ TAG_PRICE_SHARE = 0.75  # default sponsor-tag price as a share of the full-ad pr
 
 
 def price(c: Campaign, fmt: str = "ad") -> int:
-    """What one play costs: fmt='ad' (full ad while the customer pays) or 'tag' (short sponsor tag)."""
+    """What one play costs: fmt='ad' (full ad after the payment message) or 'tag' (short sponsor tag)."""
     if fmt == "tag":
         return c.tag_bid_paise or max(1, round(c.bid_paise * TAG_PRICE_SHARE))
     return c.bid_paise

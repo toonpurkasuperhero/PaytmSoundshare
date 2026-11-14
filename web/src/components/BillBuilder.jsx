@@ -152,7 +152,7 @@ export default function BillBuilder({ merchant, catalog, devices, orderId, onOrd
           accent
           icon="receipt_long"
           title="New bill"
-          subtitle="Add items from your catalog, type rows, paste bill text or upload a photo. The customer pays the full amount with one QR, and a nearby business's ad plays while they pay."
+          subtitle="Add items from your catalog, type rows, paste bill text or upload a photo. The customer pays the full amount with one QR, and right after the payment message the Soundbox plays a short ad from a nearby business."
         >
           <AiWarning className="mb-4" what="Bill text and photo reading" />
 
@@ -331,7 +331,7 @@ export default function BillBuilder({ merchant, catalog, devices, orderId, onOrd
         ) : (
           <Card icon="qr_code_2" title="Live order">
             <Empty icon="qr_code_2" title="No bill in progress">
-              Build a bill and press "Create bill & show QR". The QR appears on the Soundbox, a nearby business's ad plays while the customer pays, and your ad earnings show here once the payment lands.
+              Build a bill and press "Create bill & show QR". The QR appears on the Soundbox, the customer pays, the Soundbox announces the payment and then plays a nearby business's ad, and your ad earnings show here once the payment lands.
             </Empty>
           </Card>
         )}

@@ -1,7 +1,7 @@
 import { inr } from '../format.js';
 import { Icon, Pill } from './ui.jsx';
 
-const KIND = { audio: 'ad heard while paying', tag: 'sponsor line (busy hour)' };
+const KIND = { audio: 'ad after the payment message', tag: 'sponsor line (busy hour)' };
 
 /** What this bill's counter ad earned the merchant: full payment received, then where the ad money went. */
 export default function Settlement({ order }) {

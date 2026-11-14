@@ -268,7 +268,7 @@ class Hold(Base):
     ack_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     peak_db: Mapped[float | None] = mapped_column(Float, nullable=True)
     release_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    # kind=audio (full ad, plays while the customer pays) / kind=tag (sponsor tag after the payment message)
+    # kind=audio (full ad after the payment message) / kind=tag (sponsor tag after the payment message)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)   # device confirmed a full, audible play
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)  # play sent to the device
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

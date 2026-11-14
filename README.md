@@ -2,15 +2,15 @@
 
 **Team Yottaminds · Track 1 (Merchant Growth AI)**
 
-Small merchants pay a monthly rental for their Paytm Soundbox, but it sits idle between "payment received" messages. SoundShare turns it into an income source. The customer pays the full bill with one QR, with no fee and no price split. While they pay, the Soundbox plays a short AI-generated ad from a nearby business, and the payment message plays as soon as the ad ends. Advertisers pay only for verified plays on paid bills. That money first pays the merchant's Soundbox rental for the month, and everything after that is the merchant's own earnings, shown on a live earnings tracker.
+Small merchants pay a monthly rental for their Paytm Soundbox, but it sits idle between "payment received" messages. SoundShare turns it into an income source. The customer pays the full bill with one QR, with no fee and no price split. As soon as the payment message plays, the Soundbox plays a short AI-generated ad from a nearby business. Advertisers pay only for verified plays on paid bills. That money first pays the merchant's Soundbox rental for the month, and everything after that is the merchant's own earnings, shown on a live earnings tracker.
 
 Advertisers write a one-line brief in English (or speak it). AI writes the ad in any of 11 Indian languages, voices it with Sarvam or Gemini, and designs the counter-screen banner. Payment announcements play in the merchant's own language.
 
 ## How a sale works
 
 1. The merchant builds the bill (catalog taps, typed rows, pasted text or a photo) and presses **Create bill & show QR**.
-2. The Soundbox shows the QR for the **full amount** and starts the ad at the same moment.
-3. The customer pays. The Soundbox waits for the ad to finish, then announces the payment.
+2. The Soundbox shows the QR for the **full amount**.
+3. The customer pays. The Soundbox announces the payment, then plays the ad.
 4. **Busy hour** (a switch on the merchant page): no full ad. Only a one-second "Sponsored by …" line plays after the payment message, priced lower than a full ad (75% by default).
 5. The advertiser is charged only if the bill was paid **and** the Soundbox confirmed the ad played (at least 80% of it). Self-payments earn no ad money.
 

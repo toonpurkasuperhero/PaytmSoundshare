@@ -6,7 +6,7 @@ Errors use the shape `{"detail": "...", "error": "<code>"?, "reasons": [...]?}`.
 
 **Product rules (v3):**
 - **One bill, one QR, full price.** There is no payment fee and no price split. Every order has exactly one leg for the whole amount.
-- **The ad plays while the customer pays.** Ad money for a paid bill with a verified play goes: Paytm share (`PLATFORM_SURPLUS_TAKE_PCT`, default 25%), then this merchant's Soundbox rental for the month, then the merchant's earnings.
+- **The ad plays right after the payment message.** Ad money for a paid bill with a verified play goes: Paytm share (`PLATFORM_SURPLUS_TAKE_PCT`, default 25%), then this merchant's Soundbox rental for the month, then the merchant's earnings.
 - **AI is the primary path** for ad creation (Gemini copy, Sarvam/Gemini voices, 11 languages) and bill reading. Deterministic fallbacks run **only when every AI call fails**. Every AI-produced object says which path produced it: `"source": "ai" | "fallback"` plus `"fallback_reason"`.
 - Real users sign up themselves; the admin account comes from env vars. Optional demo accounts come from `python -m app.cli seed-demo` and are removed with `remove-demo`.
 
@@ -88,7 +88,7 @@ CatalogItem = {"id":"C-..","name":"..","unit_price":470000,"hsn_sac":"8509","cat
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
 | POST | `/api/bills/parse` | merchant | `{text}`, or multipart `image` (bill photo: jpeg/png/webp, ≤ 8 MB) | `{items: ItemIn[], source, fallback_reason?, model?}` |
-| POST | `/api/orders` | merchant | `{device_id, items: ItemIn[]}` | `201 Order`. One QR for the full total; the ad starts on the Soundbox at once. |
+| POST | `/api/orders` | merchant | `{device_id, items: ItemIn[]}` | `201 Order`. One QR for the full total. The ad is reserved now and plays after the payment message. |
 | GET | `/api/orders?limit=20` | merchant (own) / admin (all, optional `merchant_id`) | – | `Order[]` |
 | GET | `/api/orders/{id}` | owner/admin | – | `Order` |
 | POST | `/api/orders/{id}/cancel` | owner | – | `Order` |
@@ -208,14 +208,11 @@ Times are epoch **seconds**. Media URLs are **http**. Banner text is ASCII.
 {"type":"payment_success","orderId":"O-1","amount":650000,"lang":"en",
  "announce":["n6","thousand","n5","hundred","rupees","received"],"announceText":"Six thousand five hundred rupees received",
  "announceUrl":null|"http://host:8000/api/announce/O-1.mp3",   // play this instead of clips when present
- "playId":"P-2"|null,"ad":null|{"kind":"tag","hash":"<sha1>","url":"...","durationMs":1100},  // busy-hour sponsor line only
+ "playId":"P-2"|null,"ad":null|{"kind":"ad"|"tag","hash":"<sha1>","url":"...","durationMs":3500,"advertiser":"FitZone Gym"},
+   // played right AFTER the announcement, then play_ack. Normal hours: kind "ad" (full ad, Campaign.bid_paise).
+   // Busy hour (merchant busy_mode): kind "tag" (about 1 s "Sponsored by ...", Campaign.tag_bid_paise, default 75%).
  "banner":null|Banner,"offerQr":null|"http://host:8000/api/offers/CR-1/claim?d=SB-7F3A",
  "settlement":null}
-{"type":"play_ad","orderId":"O-1","playId":"P-1","ad":{"hash":"<sha1>","url":"http://host:8000/media/audio/<sha1>.mp3","durationMs":3500,"advertiser":"FitZone Gym"},"banner":Banner,"offerQr":"http://host:8000/api/offers/CR-1/claim?d=SB-7F3A"}
-   // Normal hours: sent right after show_qr. Play it now, while the customer pays. A payment_success that
-   // arrives meanwhile is played AFTER the ad ends. Charged only if fully played AND the bill gets paid.
-   // Busy hour (merchant busy_mode): no play_ad. payment_success.ad carries a short sponsor tag
-   // ({"kind":"tag", ...}, about 1 s, priced at Campaign.tag_bid_paise, default 75% of bid_paise) played after the message.
 {"type":"payment_failed","orderId":"O-1","legId":"L-1","reason":"expired"}
 {"type":"cancelled","orderId":"O-1"}
 {"type":"cache_audio","hash":"<sha1>","url":"http://host:8000/media/audio/<sha1>.mp3"}

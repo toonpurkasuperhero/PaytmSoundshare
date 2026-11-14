@@ -487,15 +487,15 @@ def test_busy_hour_plays_only_the_cheaper_sponsor_tag(client, fake, monkeypatch)
                         json={"tag_bid_paise": 120}).status_code == 422   # tag must cost less than the ad
 
 
-def test_ad_heard_by_a_customer_who_walks_away_is_not_charged(client, fake):
+def test_no_ad_and_no_charge_if_the_customer_never_pays(client, fake):
     e = setup_ecosystem(client)
     ws_cm, ws = _merchant_ws(client, e)
     try:
-        o = client.post("/api/orders", headers=e["mh"], json={"items": ITEMS[1:], "legs": [[0]]}).json()
-        ad = recv_until(ws, "play_ad")
-        ws.send_text(json.dumps({"type": "play_ack", "playId": ad["playId"], "ms": 2400, "peakDb": -20}))
-        time.sleep(0.2)
+        o = client.post("/api/orders", headers=e["mh"], json={"items": ITEMS[1:]}).json()
+        qr = recv_until(ws, "show_qr")
+        assert qr["orderId"] == o["id"]
         client.post(f"/api/orders/{o['id']}/cancel", headers=e["mh"])   # customer left without paying
+        assert recv_until(ws, "cancelled")["orderId"] == o["id"]      # nothing played before payment
     finally:
         ws_cm.__exit__(None, None, None)
     fit = client.get(f"/api/advertisers/{e['fit']['user']['advertiser_id']}", headers=e["fh"]).json()
@@ -551,13 +551,12 @@ def _sell(client, e, ws, items, rail="UPI_BANK", ack=True):
     assert len(o["legs"]) == 1 and o["legs"][0]["amount_paise"] == o["total_paise"]   # no price division
     qr = recv_until(ws, "show_qr")
     assert (qr["seq"], qr["of"]) == (1, 1)
-    ad = recv_until(ws, "play_ad")                       # plays while the customer pays
-    if ack:
-        ws.send_text(json.dumps({"type": "play_ack", "playId": ad["playId"], "ms": 2400, "peakDb": -20}))
-        time.sleep(0.2)
     client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": o["legs"][0]["id"], "rail": rail})
-    ok = recv_until(ws, "payment_success")
-    assert ok["settlement"] is None and ok["ad"] is None
+    ok = recv_until(ws, "payment_success")               # payment message first, then the full ad
+    assert ok["settlement"] is None and ok["ad"]["kind"] == "ad" and ok["playId"]
+    assert o["status"] != "settled"
+    if ack:
+        ws.send_text(json.dumps({"type": "play_ack", "playId": ok["playId"], "ms": 2400, "peakDb": -20}))
     return wait_order(client, e["mh"], o["id"])
 
 

@@ -20,7 +20,7 @@ export function AuthFrame({ children, title, subtitle }) {
         <div className="eyebrow">Paytm SoundShare</div>
         <h2 className="mt-3 text-headline-lg">Your Soundbox earns for you.</h2>
         <p className="mt-3 text-body-lg text-white/80">
-          Customers pay the full bill with one QR. While they pay, the Soundbox plays a short ad from a nearby business. That ad money
+          Customers pay the full bill with one QR. Right after "payment received", the Soundbox plays a short ad from a nearby business. That ad money
           first pays the merchant's Soundbox rental, and everything after that is the merchant's own earnings.
         </p>
         <ul className="mt-6 space-y-3 text-body-md text-white/90">

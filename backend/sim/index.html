@@ -320,7 +320,8 @@
     audioQueue = audioQueue.then(() => playPaymentAudio(m)).catch(e => log("!", String(e)));
   }
   let audioQueue = Promise.resolve();
-  // The counter ad: starts as the QR goes up (customer is paying). It joins the same queue, so a
+  // Legacy play_ad (older servers played the ad during payment). Current servers send the ad inside
+  // payment_success instead, played after the announcement. It joins the same queue, so a
   // payment message that arrives meanwhile is played only after the ad finishes.
   function onPlayAd(m) {
     if (!m.ad || !m.playId) return;

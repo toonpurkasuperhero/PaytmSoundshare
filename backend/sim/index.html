@@ -84,10 +84,14 @@
   .muted { color: var(--muted); font-size: .85rem; }
   #unlock { position: fixed; inset: 0; background: rgba(0,20,50,.75); display: grid; place-items: center; z-index: 9; }
   #unlock button { font-size: 1.1rem; padding: 14px 22px; background: var(--sky); color: #001; }
+  #soundOff { display: none; position: fixed; left: 0; right: 0; top: 0; z-index: 8; padding: 12px 16px; text-align: center;
+              background: #B91C1C; color: #fff; font-weight: 700; cursor: pointer; }
+  #soundOff.on { display: block; }
 </style>
 </head>
 <body>
 <div id="unlock"><button id="unlockBtn">Tap to power on the Soundbox (enables audio)</button></div>
+<div id="soundOff" role="alert">Sound is off: the browser paused audio for this tab. Tap here to turn it back on, and keep this tab in front.</div>
 <header>
   <h1>Soundbox Simulator</h1>
   <span class="pill" id="devPill">DEV1</span>
@@ -223,8 +227,23 @@
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
       analyser.connect(audioCtx.destination);
+      audioCtx.onstatechange = soundState;
     }
     return audioCtx;
+  }
+  function soundState() {
+    const off = !!audioCtx && audioCtx.state !== "running" && audioCtx.state !== "closed";
+    const bar = document.getElementById("soundOff");
+    if (bar) bar.classList.toggle("on", off);
+    return !off;
+  }
+  // Returns true when audio can play. Waits up to `ms` for the browser (or a tap) to allow it.
+  async function ensureSound(ms) {
+    const c = ctx();
+    if (c.state === "running") return true;
+    soundState();
+    try { await Promise.race([c.resume(), new Promise(r => setTimeout(r, ms))]); } catch {}
+    return soundState();
   }
   // Media URLs are absolute (built for the ESP32); fetch them from this page's own origin.
   const localPath = (u) => { try { const x = new URL(u, location.href); return x.pathname + x.search; } catch { return u; } };
@@ -250,7 +269,7 @@
   async function playAnnouncement(tokens, lang) {
     const bufs = (await Promise.all((tokens || []).map(t => clip(lang, t)))).filter(Boolean);
     const c = ctx();
-    if (c.state === "suspended") await c.resume();
+    if (!(await ensureSound(4000))) throw new Error("sound is off in this tab");
     let at = c.currentTime + 0.05;
     for (const b of bufs) { const s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(at); at += b.duration; }
     await new Promise(r => setTimeout(r, Math.max(0, (at - c.currentTime) * 1000) + 60));
@@ -261,8 +280,9 @@
     try { buf = await withTimeout(loadBuf(localPath(ad.url)), 8000, "ad download"); }
     catch (e) { return fail(e.message); }
     const c = ctx();
-    if (c.state === "suspended") { try { await c.resume(); } catch {} }
-    if (c.state !== "running") return fail("audio is blocked by the browser; tap the page once");
+    // Wait up to 8 s for sound (a tap on the red bar resumes it); otherwise report "not played"
+    // straight away, so the advertiser isn't charged and the payment message isn't held up.
+    if (!(await ensureSound(8000))) return fail("sound is off in this tab (browser paused audio); tap the red bar");
     return await new Promise((res) => {
       const s = c.createBufferSource(); s.buffer = buf; s.connect(analyser);
       const tbuf = new Float32Array(analyser.fftSize);
@@ -323,7 +343,7 @@
       try {
         const buf = await withTimeout(loadBuf(localPath(m.announceUrl)), 6000, "announcement");
         const c = ctx();
-        if (c.state === "suspended") await c.resume();
+        if (!(await ensureSound(4000))) throw new Error("sound is off in this tab");
         const s = c.createBufferSource(); s.buffer = buf; s.connect(c.destination);
         await new Promise(r => { s.onended = r; s.start(); setTimeout(r, buf.duration * 1000 + 1500); });
         spoken = true;
@@ -440,7 +460,11 @@
     connect();
   };
   // If the browser suspends audio later (tab in background, OS sleep), any tap resumes it.
-  document.addEventListener("pointerdown", () => { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); });
+  document.addEventListener("pointerdown", () => { if (audioCtx && audioCtx.state !== "running") audioCtx.resume().then(soundState, soundState); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) log("!", "Soundbox tab is in the background; some browsers pause its sound. Keep it in front or in its own window.");
+    else if (audioCtx && audioCtx.state !== "running") audioCtx.resume().then(soundState, soundState);
+  });
 })();
 </script>
 </body>

@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { inr, LANGS, num, pct, time, titleCase, VPA_RE } from '../format.js';
 import { usePoll } from '../hooks.js';
 import { useAccount } from '../session.jsx';
-import { Card, ChipInput, Empty, ErrorNote, Field, Icon, PageHead, Pill, Progress, SourceBadge, Spinner, Tabs, Toggle } from '../components/ui.jsx';
+import { Card, ChipInput, Empty, ErrorNote, Field, Icon, PageHead, Pill, Progress, Spinner, Tabs, Toggle } from '../components/ui.jsx';
 import BillBuilder from '../components/BillBuilder.jsx';
 import CatalogManager from '../components/CatalogManager.jsx';
 import DeviceManager from '../components/DeviceManager.jsx';
@@ -38,79 +38,210 @@ function Kpi({ label, value, sub, icon, highlight }) {
   );
 }
 
-function SharedCard({ st }) {
-  const sh = st.shared;
-  if (!sh) return null;
+const RENTAL_COLOR = '#00BAF2'; // paytm-cyan
+const EARN_COLOR = '#00B06F'; // success-green
+const shortDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+
+function DailyChart({ daily }) {
+  const max = Math.max(1, ...daily.map((d) => d.earnings_paise + d.rental_paise));
   return (
-    <Card icon="diversity_3" title="SoundShare pool"
-      subtitle="Once your own fee and Soundbox rental are covered, leftover ad money from your counter joins a shared pool that pays other shops' fees, and theirs helps you when your own ads fall short.">
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <Kpi label="You contributed" icon="volunteer_activism" value={inr(sh.contributed_paise)} sub="Your ad surplus shared with nearby shops" />
-        <Kpi label="Pool paid your fees" icon="verified" value={inr(sh.received_for_fees_paise)} sub={`Up to ${inr(sh.daily_cap_paise)} per day`} highlight />
-        <Kpi label="Pool paid your rental" icon="speaker" value={inr(sh.received_for_rental_paise)} sub="When your own ads weren't enough" />
-        <Kpi label="Network pool now" icon="account_balance_wallet" value={inr(sh.network_pool_balance_paise)} sub="Available to all SoundShare shops" />
+    <div>
+      <div className="mb-3 flex flex-wrap gap-4 text-body-sm text-on-surface">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: EARN_COLOR }} /> Your ad earnings
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-sm" style={{ background: RENTAL_COLOR }} /> Paid towards Soundbox rental
+        </span>
       </div>
-      <div className="mt-3 text-body-sm text-on-surface-variant">
-        {st.ad_income_per_play_paise != null ? `Average verified ad at your counter: ${inr(st.ad_income_per_play_paise)}. ` : ''}
-        Paytm keeps {pct(st.platform_take_pct ?? 25, 0)} of ad surplus; the rest stays with merchants.
+      <div className="flex h-40 items-end gap-[2px] border-b border-outline-variant" role="img" aria-label="Daily ad money over the last 30 days">
+        {daily.map((d) => {
+          const tot = d.earnings_paise + d.rental_paise;
+          return (
+            <div
+              key={d.date}
+              className="relative flex h-full min-w-0 flex-1 flex-col justify-end rounded-t hover:bg-slate-100"
+              title={`${shortDate(d.date)}: earnings ${inr(d.earnings_paise)}, rental ${inr(d.rental_paise)}, ${d.plays} ad play${d.plays === 1 ? '' : 's'}`}
+            >
+              {tot > 0 && (
+                <div className="flex flex-col gap-[2px] overflow-hidden rounded-t" style={{ height: `${Math.max(3, (tot / max) * 100)}%` }}>
+                  {d.earnings_paise > 0 && <div style={{ flexGrow: d.earnings_paise, background: EARN_COLOR }} />}
+                  {d.rental_paise > 0 && <div style={{ flexGrow: d.rental_paise, background: RENTAL_COLOR }} />}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-    </Card>
+      <div className="mt-1 flex justify-between text-label-sm text-on-surface-variant">
+        <span>{daily.length ? shortDate(daily[0].date) : ''}</span>
+        <span>Tallest day {inr(max)}</span>
+        <span>Today</span>
+      </div>
+      <details className="mt-3 rounded-lg border border-outline-variant">
+        <summary className="cursor-pointer px-3 py-2 text-label-md text-paytm-navy">Show as table</summary>
+        <div className="max-h-64 overflow-auto border-t border-outline-variant">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th className="text-right">Ad plays</th>
+                <th className="text-right">Rental</th>
+                <th className="text-right">Earnings</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...daily]
+                .reverse()
+                .filter((d) => d.plays || d.earnings_paise || d.rental_paise)
+                .map((d) => (
+                  <tr key={d.date}>
+                    <td>{shortDate(d.date)}</td>
+                    <td className="tnum text-right">{num(d.plays)}</td>
+                    <td className="text-right font-mono">{inr(d.rental_paise)}</td>
+                    <td className="text-right font-mono">{inr(d.earnings_paise)}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
   );
 }
 
-function Savings({ merchant }) {
-  const st = merchant?.stats;
-  if (!st) return <div className="flex items-center gap-2 text-on-surface-variant"><Spinner /> Loading stats…</div>;
-  const r = st.rental || {};
+function Earnings({ merchant }) {
+  const { data: t, error } = usePoll(() => api.earnings(merchant.id, 30), 10000, [merchant.id]);
+  if (!t) {
+    return error ? (
+      <ErrorNote error={error} title="Could not load your earnings" />
+    ) : (
+      <div className="flex items-center gap-2 text-on-surface-variant">
+        <Spinner /> Loading earnings…
+      </div>
+    );
+  }
+  const tot = t.totals || {};
+  const r = t.rental || {};
   const fee = r.monthly_fee_paise ?? 0;
   const paid = Math.min(r.paid_this_month_paise ?? 0, fee);
-  const net = Math.max(0, fee - paid);
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-5">
-        <Kpi label="Payments settled" icon="receipt_long" value={num(st.tx_count)} sub={`${inr(st.gross_paise)} collected`} />
-        <Kpi label="MDR charged" icon="credit_card" value={inr(st.mdr_paise)} sub="Paid in full to the acquirer" />
-        <Kpi label="Covered for you" icon="verified" value={inr(st.covered_paise)} sub={st.tx_count ? `${pct(st.coverage_pct)} of MDR, by ads and the pool` : 'No payments yet'} highlight />
-        <Kpi label="Saved by GST split" icon="call_split" value={inr(st.saved_by_factorization_paise)} sub="Less MDR charged" />
-        <Kpi label="You paid in fees" icon="savings" value={inr(Math.max(0, (st.mdr_paise ?? 0) - (st.covered_paise ?? 0)))} sub="MDR not covered" />
+      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+        <Kpi label="Today" icon="today" value={inr(tot.today_paise)} sub="Ad earnings" />
+        <Kpi label="Last 7 days" icon="date_range" value={inr(tot.week_paise)} sub="Ad earnings" />
+        <Kpi label="This month" icon="calendar_month" value={inr(tot.month_paise)} sub={`${num(tot.plays_month)} ad plays`} />
+        <Kpi label="Lifetime earnings" icon="account_balance_wallet" value={inr(tot.lifetime_paise)} sub={`${num(tot.plays_lifetime)} ad plays`} highlight />
       </div>
-      {st.tx_count === 0 && (
-        <Empty icon="savings" title="No settled payments yet">
-          Your savings appear here after your first bill is paid and settled.
-        </Empty>
-      )}
-      <Card icon="speaker" title="Soundbox rental" subtitle="Ad money left after your own fees pays your Soundbox rental for the month, before anything is shared.">
+
+      <Card icon="speaker" title="Soundbox rental" subtitle="Ad money pays your Soundbox rental first each month. After that, everything is your earnings.">
         <div className="grid items-center gap-6 md:grid-cols-2">
           <div className="flex items-center gap-4">
             <div>
               <div className="text-label-sm text-on-surface-variant">Monthly rental</div>
-              <div className="tnum text-headline-md text-slate-400 line-through decoration-2">{inr(fee)}</div>
+              <div className="tnum text-headline-md text-paytm-navy">{inr(fee)}</div>
             </div>
             <Icon name="arrow_forward" className="text-[24px] text-paytm-cyan" />
             <div>
-              <div className="text-label-sm text-on-surface-variant">You pay this month</div>
-              <div className={`tnum text-headline-lg ${net === 0 ? 'text-success-green' : 'text-paytm-navy'}`}>{inr(net)}</div>
+              <div className="text-label-sm text-on-surface-variant">Still to pay this month</div>
+              <div className={`tnum text-headline-lg ${r.due_paise === 0 ? 'text-success-green' : 'text-paytm-navy'}`}>{inr(r.due_paise ?? fee)}</div>
             </div>
           </div>
           <div className="space-y-3">
             <div>
               <div className="mb-1 flex justify-between text-body-sm">
-                <span>Paid by ads this month {inr(paid)}</span>
+                <span>Paid by ads this month: {inr(paid)}</span>
                 <span className="text-on-surface-variant">{pct(fee ? (paid / fee) * 100 : 0, 0)}</span>
               </div>
               <Progress value={paid} max={fee || 1} tone="good" label="Rental paid by ads" />
             </div>
             <div className="text-body-sm text-on-surface-variant">
-              {net === 0
-                ? 'Rental fully paid by ads this month.'
+              {r.due_paise === 0
+                ? 'Rental fully paid by ads this month. Every new ad play is earnings.'
                 : r.plays_to_cover != null
-                  ? `About ${num(r.plays_to_cover)} more verified ad plays on fee-free sales clear this month's rental.`
+                  ? `About ${num(r.plays_to_cover)} more ad plays clear this month's rental.`
                   : 'Rental is paid as ads play at your counter.'}
             </div>
           </div>
         </div>
       </Card>
-      <SharedCard st={st} />
+
+      <Card icon="bar_chart" title="Last 30 days" subtitle={`Ad money from your counter, day by day. Paytm keeps ${pct(t.platform_share_pct ?? 25, 0)}; the rest is yours.`}>
+        {tot.plays_lifetime ? (
+          <DailyChart daily={t.daily || []} />
+        ) : (
+          <Empty icon="campaign" title="No ad plays yet">
+            When a nearby business's ad plays while a customer pays at your counter, the money shows up here.
+          </Empty>
+        )}
+      </Card>
+
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+        <Card icon="storefront" title="Who paid you" subtitle="Advertisers whose ads played at your counter">
+          {(t.by_advertiser || []).length === 0 ? (
+            <p className="text-body-sm text-on-surface-variant">No advertisers yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Advertiser</th>
+                    <th className="text-right">Full ads</th>
+                    <th className="text-right">Sponsor lines</th>
+                    <th className="text-right">Ad money</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.by_advertiser.map((a) => (
+                    <tr key={a.advertiser_id}>
+                      <td>{a.name}</td>
+                      <td className="tnum text-right">{num(a.plays)}</td>
+                      <td className="tnum text-right">{num(a.tags)}</td>
+                      <td className="text-right font-mono">{inr(a.ad_revenue_paise)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+        <Card icon="receipt_long" title="Recent bills with ads" subtitle="What each paid bill's ad earned you">
+          {(t.recent || []).length === 0 ? (
+            <p className="text-body-sm text-on-surface-variant">No settled bills yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Bill</th>
+                    <th>When</th>
+                    <th className="text-right">Ad money</th>
+                    <th className="text-right">Rental</th>
+                    <th className="text-right">Earned</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.recent.map((o) => (
+                    <tr key={o.order_id}>
+                      <td>
+                        <div className="font-mono text-[12px]">{o.order_id}</div>
+                        <div className="text-label-sm text-on-surface-variant">
+                          {inr(o.bill_paise)}
+                          {o.advertisers?.length ? ` · ${o.advertisers.join(', ')}` : ''}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap">{time(o.settled_at)}</td>
+                      <td className="text-right font-mono">{inr(o.ad_revenue_paise)}</td>
+                      <td className="text-right font-mono">{inr(o.rental_paid_paise)}</td>
+                      <td className="text-right font-mono font-semibold text-success-green">{inr(o.earnings_paise)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -124,7 +255,7 @@ function Orders({ onOpen }) {
         !error && <div className="flex items-center gap-2 text-on-surface-variant"><Spinner /> Loading…</div>
       ) : orders.length === 0 ? (
         <Empty icon="receipt_long" title="No orders yet">
-          Bills you create on the terminal show up here with their payment status and settlement.
+          Bills you create on the terminal show up here with their payment status and ad earnings.
         </Empty>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-outline">
@@ -133,11 +264,9 @@ function Orders({ onOpen }) {
               <tr>
                 <th>Order</th>
                 <th>Created</th>
-                <th>Legs</th>
-                <th>Division</th>
                 <th>Status</th>
                 <th className="text-right">Total</th>
-                <th className="text-right">Fee covered</th>
+                <th className="text-right">Ad earnings</th>
               </tr>
             </thead>
             <tbody>
@@ -145,13 +274,11 @@ function Orders({ onOpen }) {
                 <tr key={o.id} className="cursor-pointer hover:bg-surface-subtle" onClick={() => onOpen(o.id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(o.id)}>
                   <td className="font-mono font-semibold">{o.id}</td>
                   <td className="whitespace-nowrap">{time(o.created_at)}</td>
-                  <td>{o.legs?.length ?? '—'}</td>
-                  <td>{o.division?.source ? <SourceBadge source={o.division.source} model={o.division.model} reason={o.division.fallback_reason} /> : '—'}</td>
                   <td>
                     <Pill status={o.status} dot />
                   </td>
                   <td className="text-right font-mono">{inr(o.total_paise)}</td>
-                  <td className="text-right">{o.settlement ? pct(o.settlement.coverage_pct) : '—'}</td>
+                  <td className="text-right">{o.settlement?.status === 'settled' ? inr(o.settlement.earnings_paise ?? 0) : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -166,7 +293,6 @@ function Settings({ merchant, onSaved }) {
   const init = (m) => ({
     name: m.name || '',
     blocked: m.blocked_categories || [],
-    factorize: !!m.factorization_enabled,
     lang: m.lang || 'en',
     vpa: m.vpa || '',
     lat: m.lat ?? null,
@@ -188,7 +314,6 @@ function Settings({ merchant, onSaved }) {
       const m = await api.updateMerchant(merchant.id, {
         name: f.name.trim(),
         blocked_categories: f.blocked,
-        factorization_enabled: f.factorize,
         lang: f.lang,
         vpa: f.vpa.trim(),
         lat: f.lat,
@@ -211,14 +336,6 @@ function Settings({ merchant, onSaved }) {
         <Card icon="block" title="Ad controls" subtitle="Ads in these categories never play on your Soundbox.">
           <ChipInput values={f.blocked} onChange={(blocked) => setF((s) => ({ ...s, blocked }))} suggestions={BLOCK_SUGGESTIONS} placeholder="Type a category, press Enter" />
           <p className="mt-2 text-body-sm text-on-surface-variant">Competitor ads in your own category ({titleCase(merchant.category)}) are excluded automatically.</p>
-        </Card>
-        <Card icon="call_split" title="Billing">
-          <Toggle
-            checked={f.factorize}
-            onChange={(factorize) => setF((s) => ({ ...s, factorize }))}
-            label="Split bills along GST supply boundaries by default"
-            hint="Off: every bill is a single QR, and sponsors cover the whole fee."
-          />
         </Card>
         <Card icon="storefront" title="Shop details">
           <div className="space-y-3">
@@ -356,7 +473,7 @@ export default function Merchant() {
     { value: 'orders', label: 'Orders', icon: 'history' },
     { value: 'catalog', label: 'Catalog', icon: 'inventory_2', badge: catalog ? catalog.length : null },
     { value: 'devices', label: 'Soundboxes', icon: 'speaker', badge: devices.data ? devList.length : null },
-    { value: 'savings', label: 'Savings', icon: 'savings' },
+    { value: 'earnings', label: 'Earnings', icon: 'account_balance_wallet' },
     { value: 'settings', label: 'Settings', icon: 'settings' },
   ];
 
@@ -376,10 +493,12 @@ export default function Merchant() {
             <BusyHourSwitch merchant={merchant} onChange={setAccount} />
             <div className="flex items-center gap-4 rounded-xl border border-outline bg-white px-4 py-2 shadow-sm">
               <div>
-                <div className="text-label-sm text-on-surface-variant">MDR covered</div>
-                <div className={`tnum text-headline-sm ${merchant.stats.tx_count ? 'text-success-green' : 'text-on-surface-variant'}`} title={merchant.stats.tx_count ? undefined : 'No settled payments yet'}>
-                  {merchant.stats.tx_count ? pct(merchant.stats.coverage_pct) : '—'}
-                </div>
+                <button type="button" className="text-left" onClick={() => setParam({ tab: 'earnings', order: '' })} title="Open your earnings tracker">
+                  <div className="text-label-sm text-on-surface-variant">Ad earnings</div>
+                  <div className={`tnum text-headline-sm ${merchant.stats.earnings_lifetime_paise ? 'text-success-green' : 'text-paytm-navy'}`}>
+                    {inr(merchant.stats.earnings_lifetime_paise ?? 0)}
+                  </div>
+                </button>
               </div>
               <span className="h-8 w-px bg-outline-variant" />
               <div>
@@ -412,7 +531,7 @@ export default function Merchant() {
       {tab === 'orders' && <Orders onOpen={(id) => setParam({ tab: '', order: id })} />}
       {tab === 'catalog' && <CatalogManager merchantId={merchant.id} catalog={catalog} setCatalog={setCatalog} error={catErr} />}
       {tab === 'devices' && <DeviceManager devices={devices.data} error={devices.error} reload={devices.reload} />}
-      {tab === 'savings' && <Savings merchant={merchant} />}
+      {(tab === 'earnings' || tab === 'savings') && <Earnings merchant={merchant} />}
       {tab === 'settings' && <Settings merchant={merchant} onSaved={(m) => setAccount((cur) => ({ ...cur, ...m }))} />}
     </div>
   );

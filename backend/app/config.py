@@ -73,13 +73,12 @@ class Settings(BaseSettings):
     # Which AI voices ads first: sarvam | gemini (the other one is the AI backup)
     ad_voice_primary: str = "sarvam"
 
-    # Share of a sale's ad surplus (ad money beyond that sale's MDR) kept by the platform. The rest
-    # pays the merchant's own Soundbox rental for the month, then goes to the shared SoundShare pool.
+    # Paytm's share of each verified ad play. The rest pays the merchant's Soundbox rental for the
+    # month, then becomes the merchant's ad earnings.
     platform_surplus_take_pct: float = 25.0
-    # Max a single merchant can draw from the shared pool per day (so no one shop drains it).
-    shared_pool_daily_cap_paise: int = 50000
-    # The shared pool pays other merchants' rentals only above this balance (fees come first).
-    shared_pool_fee_reserve_paise: int = 50000
+
+    # Advertiser onboarding: ads go live only after GST verification AND this much has been deposited.
+    advertiser_min_deposit_paise: int = 20000
 
     poll_interval_s: float = 3.0
     play_ack_timeout_s: float = 15.0

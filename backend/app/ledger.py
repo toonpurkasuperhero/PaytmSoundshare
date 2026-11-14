@@ -5,9 +5,8 @@ A positive amount means money flowed INTO the account.
 Accounts:
   customer           - payers at the counter (source of bill money)
   merchant:<id>      - merchant settlement account
-  acquirer           - acquiring bank / network MDR (paid in full, always)
   sponsor_pool       - SoundShare clearing pool funded by ads (per order, always emptied)
-  shared_pool        - SoundShare pool: ad surplus shared across merchants (fees, then rentals)
+  merchant_earnings:<id> - a merchant's ad earnings (after their Soundbox rental is paid)
   soundbox_rental    - Soundbox rental paid to Paytm by ads (ref rental:<merchant>:<YYYY-MM>)
   adv:<id>           - advertiser prepaid wallet
   platform           - Paytm platform spread
@@ -26,7 +25,6 @@ STATIC_LABELS = {
     "customer": "Customers",
     "acquirer": "Acquirer / Network MDR",
     "sponsor_pool": "Ad clearing (per sale)",
-    "shared_pool": "SoundShare pool",
     "soundbox_rental": "Soundbox rental (Paytm)",
     "platform": "Paytm Platform Spread",
     "funding": "Advertiser Top-ups",
@@ -61,6 +59,7 @@ def _labels(db: Session) -> dict[str, str]:
     labels = dict(STATIC_LABELS)
     for m in db.scalars(select(Merchant)):
         labels[f"merchant:{m.id}"] = m.name
+        labels[f"merchant_earnings:{m.id}"] = f"{m.name} · ad earnings"
     for a in db.scalars(select(Advertiser)):
         labels[f"adv:{a.id}"] = a.name
     return labels

@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import auth, ledger, llm, sarvam, settlement
+from .. import auth, kyc, ledger, llm, sarvam, settlement
 from ..config import settings
 from ..db import get_db
 from ..hub import hub
-from ..models import Advertiser, Device, Hold, LedgerEntry, Merchant, Order, SentinelFlag, User
+from ..models import Advertiser, Device, Hold, Merchant, Order, SentinelFlag, User
 from ..payments import ProviderError, provider_by_name
 from ..serializers import device_dict, ledger_invariant
 
@@ -125,38 +125,29 @@ def admin_stats(db: Session = Depends(get_db), _: User = Depends(admin_only)):
     settled = db.scalars(select(Order).where(Order.status == "settled")).all()
     ss = [o.settlement or {} for o in settled]
     gross = sum(o.total_paise for o in settled)
-    mdr_ = sum(s.get("mdr_paise", 0) for s in ss)
-    covered = sum(s.get("covered_paise", 0) for s in ss)
-    liquidity = sum(s.get("ad_liquidity_paise", 0) for s in ss)
-    platform = sum(s.get("platform_paise", 0) for s in ss)
     plays = db.execute(select(func.count(Hold.id)).where(Hold.kind == "audio", Hold.status == "committed")).scalar_one()
-    released = db.execute(select(func.count(Hold.id)).where(Hold.kind == "audio", Hold.status == "released")).scalar_one()
+    tags = db.execute(select(func.count(Hold.id)).where(Hold.kind == "tag", Hold.status == "committed")).scalar_one()
+    released = db.execute(select(func.count(Hold.id)).where(Hold.kind.in_(("audio", "tag")),
+                                                            Hold.status == "released")).scalar_one()
     p = sorted(settlement.LATENCIES_MS)
     return {
         "orders": db.execute(select(func.count(Order.id))).scalar_one(),
         "settled_orders": len(settled),
         "gross_paise": gross,
         "avg_ticket_paise": round(gross / len(settled)) if settled else None,
-        "mdr_paise": mdr_,
-        "interchange_pct": _pct(mdr_, gross),
-        "covered_paise": covered,
-        "coverage_pct": _pct(covered, mdr_),
-        "platform_paise": platform,
-        "spread_pct": _pct(platform, liquidity),
-        "ad_liquidity_paise": liquidity,
-        "saved_by_factorization_paise": sum(s.get("saved_by_factorization_paise", 0) for s in ss),
+        "ad_revenue_paise": sum(s.get("ad_revenue_paise", 0) for s in ss),
+        "merchant_earnings_paise": sum(s.get("earnings_paise", 0) for s in ss),
+        "rental_paid_by_ads_paise": sum(s.get("rental_paid_paise", 0) for s in ss),
+        "platform_paise": sum(s.get("platform_paise", 0) for s in ss),
         "plays": plays,
+        "tag_plays": tags,
         "plays_released": released,
-        "play_verification_pct": _pct(plays, plays + released),
+        "play_verification_pct": _pct(plays + tags, plays + tags + released),
         "devices_total": db.execute(select(func.count(Device.id))).scalar_one(),
-        "devices_online": len([d for d in hub.online_ids()]),
+        "devices_online": len(hub.online_ids()),
         "merchants": db.execute(select(func.count(Merchant.id))).scalar_one(),
         "advertisers": db.execute(select(func.count(Advertiser.id))).scalar_one(),
         "ledger_invariant_paise": ledger_invariant(db),
-        "shared_pool_paise": db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0))
-                                        .where(LedgerEntry.account == "shared_pool")).scalar_one(),
-        "rental_paid_by_ads_paise": db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0))
-                                               .where(LedgerEntry.account == "soundbox_rental")).scalar_one(),
         "latency": {
             "p50_ms": round(statistics.median(p), 1) if p else None,
             "p95_ms": round(p[min(len(p) - 1, int(len(p) * 0.95))], 1) if p else None,
@@ -164,6 +155,37 @@ def admin_stats(db: Session = Depends(get_db), _: User = Depends(admin_only)):
             "samples": len(p),
         },
     }
+
+
+class KycDecision(BaseModel):
+    action: str = Field(..., pattern="^(approve|reject)$")
+    note: str | None = Field(None, max_length=300)
+
+
+@router.get("/admin/kyc")
+def kyc_queue(status: str = Query("pending", pattern="^(pending|verified|rejected|all)$"),
+              db: Session = Depends(get_db), _: User = Depends(admin_only)):
+    """Advertisers awaiting GST verification (the stand-in for Paytm's KYC pipeline)."""
+    q = select(Advertiser).order_by(Advertiser.created_at.desc())
+    if status != "all":
+        q = q.where(Advertiser.kyc_status == status)
+    return [{"id": a.id, "name": a.name, "type": a.type, "category": a.category, "address": a.address,
+             "created_at": a.created_at, **kyc.status_dict(db, a)} for a in db.scalars(q)]
+
+
+@router.post("/admin/advertisers/{aid}/kyc")
+def kyc_decide(aid: str, body: KycDecision, db: Session = Depends(get_db), _: User = Depends(admin_only)):
+    a = db.get(Advertiser, aid)
+    if not a:
+        raise HTTPException(404, "advertiser not found")
+    if not a.gstin:
+        raise HTTPException(409, "This advertiser hasn't submitted a GSTIN")
+    if body.action == "reject" and not (body.note or "").strip():
+        raise HTTPException(422, "Give a reason so the advertiser knows what to fix")
+    (kyc.approve if body.action == "approve" else kyc.reject)(db, a, note=(body.note or "").strip() or None)
+    db.commit()
+    hub.emit("kyc_update", advertiser_id=aid, status=a.kyc_status)
+    return {"id": a.id, "name": a.name, **kyc.status_dict(db, a)}
 
 
 @router.get("/system/status")

@@ -120,8 +120,9 @@ def write_copy(name: str, category: str, prompt: str, lang: str, kind: str) -> C
                "Write a 2-3 second spoken ad" if kind == "audio" else
                "CONTEXT: this brand is sponsoring the payment fee at a shop. Write a short sponsor line")
     base = (
-        f"You are the copywriter for Paytm AdPulse. {setting} for the advertiser below.\n"
-        f"Advertiser: {name} (category: {category}).\nAdvertiser's brief: \"{prompt}\"\n\n"
+        f"You are the copywriter for Paytm SoundShare. {setting} for the advertiser below.\n"
+        f"Advertiser: {name} (category: {category}).\n"
+        f"Advertiser's brief (often typed in English; translate it into the ad language): \"{prompt}\"\n\n"
         f"Rules: script is spoken in {language}, at most {MAX_SCRIPT_WORDS} words, names the advertiser, "
         "and states the offer from the brief without inventing new terms, prices or dates. "
         "The script must NOT mention payments, money received, the shop, Paytm or the Soundbox. "
@@ -156,6 +157,12 @@ def write_copy(name: str, category: str, prompt: str, lang: str, kind: str) -> C
     except llm.AIError as e:
         script, title, subtitle, cta = _template_copy(name, prompt, kind)
         source, reason, model = "fallback", str(e), None
+        if lang != "en" and sarvam.configured():  # English brief -> the chosen ad language
+            try:
+                script = sarvam.translate(script, lang, mode="modern-colloquial")
+                reason = f"{reason}; script translated to {languages.LANGS[lang]['name']} by Sarvam"
+            except sarvam.SarvamError as e2:
+                reason = f"{reason}; translation failed: {e2}"
     moderate(script + " " + subtitle)
     return Copy(script, {"title": title, "subtitle": subtitle, "cta": cta, "bg": bg, "fg": fg, "accent": accent},
                 source, reason, model)
@@ -277,7 +284,10 @@ def generate(campaign_id: str, prompt: str | None = None, lang: str | None = Non
             if kind == "audio" and not v.audio_hash:
                 c.status, c.error = "failed", f"Could not create the voice-over: {v.fallback_reason}"
             else:
-                c.status, c.error = ("active" if c.deploy_on_ready else "draft"), None
+                from . import kyc
+                live_ok = kyc.can_go_live(db, c.advertiser)
+                c.status = ("active" if live_ok else "pending_kyc") if c.deploy_on_ready else "draft"
+                c.error = None
             status = c.status
         if v.audio_hash and status == "active":
             hub.broadcast_cache_audio(v.audio_hash)

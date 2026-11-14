@@ -128,7 +128,7 @@ export default function DeviceManager({ devices, error, reload }) {
           )
         ) : devices.length === 0 ? (
           <Empty icon="speaker" title="No Soundbox paired">
-            Pair a Soundbox to show bill QR codes at the counter, announce payments and play the ads that pay your MDR.
+            Pair a Soundbox to show bill QR codes at the counter, announce payments and play the ads that earn you money.
           </Empty>
         ) : (
           <div className="space-y-2">

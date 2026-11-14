@@ -153,6 +153,7 @@ export const api = {
   merchants: () => get('/api/merchants'),
   merchant: (id) => get(`/api/merchants/${enc(id)}`),
   updateMerchant: (id, body) => patch(`/api/merchants/${enc(id)}`, body),
+  earnings: (id, days = 30) => get(`/api/merchants/${enc(id)}/earnings${qs({ days })}`),
   catalog: (id) => get(`/api/merchants/${enc(id)}/catalog`),
   addCatalogItem: (id, body) => post(`/api/merchants/${enc(id)}/catalog`, body),
   updateCatalogItem: (id, itemId, body) => patch(`/api/merchants/${enc(id)}/catalog/${enc(itemId)}`, body),
@@ -165,7 +166,6 @@ export const api = {
     fd.append('image', file);
     return request('POST', '/api/bills/parse', fd, { form: true });
   },
-  planBill: (items, factorize) => post('/api/bills/plan', { items, factorize }),
   createOrder: (body) => post('/api/orders', body),
   orders: (params) => get(`/api/orders${qs(params)}`),
   order: (id) => get(`/api/orders/${enc(id)}`),
@@ -206,4 +206,6 @@ export const api = {
   flows: (order_id) => get(`/api/ledger/flows${qs({ order_id })}`),
   flags: (limit = 50) => get(`/api/sentinel/flags${qs({ limit })}`),
   adminStats: () => get('/api/admin/stats'),
+  kycQueue: (status = 'pending') => get(`/api/admin/kyc?status=${enc(status)}`),
+  kycDecide: (id, action, note) => post(`/api/admin/advertisers/${enc(id)}/kyc`, { action, note }),
 };

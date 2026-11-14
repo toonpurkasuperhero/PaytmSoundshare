@@ -6,12 +6,12 @@ import io
 import segno
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import announcer, auth, factorizer, languages, llm, mdr, planner, sarvam, settlement
+from .. import announcer, auth, earnings, factorizer, languages, llm, mdr, sarvam, settlement
 from ..config import settings
 from ..db import get_db, money_lock
 from ..models import CatalogItem, Device, Leg, Merchant, Order, User
@@ -29,9 +29,7 @@ def get_config():
     return {
         "provider": settings.payment_provider,
         "provider_mode": settings.provider_mode,
-        "rails": mdr.RAILS,
-        "mdr_rates": mdr.public_rates(),
-        "gst_rate": mdr.public_rates()["gst_rate"],
+        "rails": mdr.RAILS,          # payment methods the test-mode simulator can pick
         "base_url": settings.base_url,
         "ai": {"configured": llm.configured(), "text_model": settings.gemini_model,
                "tts_model": settings.gemini_tts_model},
@@ -67,7 +65,6 @@ def qr_svg(data: str = Query(..., max_length=2000), scale: int = Query(8, ge=1, 
 class MerchantPatch(BaseModel):
     name: str | None = Field(None, min_length=2, max_length=120)
     blocked_categories: list[str] | None = None
-    factorization_enabled: bool | None = None
     busy_mode: bool | None = None
     lang: str | None = Field(None, pattern=languages.PATTERN)
     vpa: str | None = None
@@ -130,6 +127,14 @@ class CatalogPatch(BaseModel):
     brand: str | None = Field(None, max_length=40)
 
 
+@router.get("/merchants/{mid}/earnings")
+def get_earnings(mid: str, days: int = Query(30, ge=7, le=120), db: Session = Depends(get_db),
+                 user: User = Depends(auth.current_user)):
+    """Ad-earnings tracker: rental paid by ads, then what the merchant earned."""
+    auth.ensure_merchant(user, mid)
+    return earnings.tracker(db, _merchant(db, mid), days)
+
+
 @router.get("/merchants/{mid}/catalog")
 def get_catalog(mid: str, db: Session = Depends(get_db), user: User = Depends(auth.current_user)):
     auth.ensure_merchant(user, mid)
@@ -142,14 +147,13 @@ def add_catalog_item(mid: str, body: CatalogIn, db: Session = Depends(get_db),
     auth.ensure_merchant(user, mid, write=True)
     _merchant(db, mid)
     item = body.model_dump()
-    classified, source, reason = factorizer.classify([item])
-    c = classified[0]
-    row = CatalogItem(id=new_id("C", 4), merchant_id=mid, name=c["name"].strip(), unit_price=c["unit_price"],
-                      hsn_sac=c["hsn_sac"], category=c["category"], brand=c.get("brand"),
-                      source={"ai": "ai", "fallback": "fallback"}.get(source, "manual"))
+    row = CatalogItem(id=new_id("C", 4), merchant_id=mid, name=item["name"].strip(), unit_price=item["unit_price"],
+                      hsn_sac=(item.get("hsn_sac") or "").strip() or "0000",
+                      category=(item.get("category") or "general").strip().lower(), brand=item.get("brand"),
+                      source="manual")
     db.add(row)
     db.commit()
-    return {**catalog_dict(row), "fallback_reason": reason}
+    return catalog_dict(row)
 
 
 def _catalog_item(db: Session, mid: str, item_id: str) -> CatalogItem:
@@ -167,12 +171,6 @@ def edit_catalog_item(mid: str, item_id: str, body: CatalogPatch, db: Session = 
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(c, k, v)
-    if {"hsn_sac", "category", "brand"} & data.keys():
-        c.source = "manual"
-    elif "name" in data:  # renamed without new codes: re-classify
-        classified, source, _ = factorizer.classify([{"name": c.name, "unit_price": c.unit_price}])
-        c.hsn_sac, c.category, c.brand = classified[0]["hsn_sac"], classified[0]["category"], classified[0].get("brand")
-        c.source = {"ai": "ai", "fallback": "fallback"}.get(source, "manual")
     db.commit()
     return catalog_dict(c)
 
@@ -186,7 +184,7 @@ def delete_catalog_item(mid: str, item_id: str, db: Session = Depends(get_db),
     return Response(status_code=204)
 
 
-# ------------------------------------------------------------------ AI bill parsing & planning
+# ------------------------------------------------------------------ AI bill parsing
 
 class ItemIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=160)
@@ -198,11 +196,6 @@ class ItemIn(BaseModel):
     supplier_gstin: str | None = Field(None, max_length=20)
     catalog_item_id: str | None = None
     classification_source: str | None = None
-
-
-class PlanIn(BaseModel):
-    items: list[ItemIn] = Field(..., min_length=1, max_length=100)
-    factorize: bool | None = None
 
 
 def _own_merchant(db: Session, user: User) -> Merchant:
@@ -239,48 +232,20 @@ async def parse_bill(request: Request, user: User = Depends(auth.require("mercha
     return await run_in_threadpool(factorizer.parse_text, text)
 
 
-@router.post("/bills/plan")
-def plan_bill(body: PlanIn, db: Session = Depends(get_db), user: User = Depends(auth.require("merchant"))):
-    m = _own_merchant(db, user)
-    fz = m.factorization_enabled if body.factorize is None else body.factorize
-    try:
-        plan, _, _ = planner.build(db, m, [i.model_dump() for i in body.items], fz)
-    except LookupError as e:
-        raise HTTPException(404, str(e))
-    return plan
-
-
 # ------------------------------------------------------------------ orders
 
-class LegIn(BaseModel):
-    item_indexes: list[int] = Field(..., min_length=1)
-    reason: str | None = Field(None, max_length=400)
-
-
 class OrderIn(BaseModel):
+    """One bill, one QR for the full amount. (Old split fields such as `legs` are ignored.)"""
     device_id: str | None = None
     items: list[ItemIn] = Field(..., min_length=1, max_length=100)
-    legs: list[list[int] | LegIn] | None = Field(None, max_length=10)
-    plan_source: str | None = Field(None, pattern="^(ai|fallback|manual|single)$")
-    rationale: str | None = Field(None, max_length=800)
-    fallback_reason: str | None = Field(None, max_length=800)
-    model: str | None = Field(None, max_length=60)
-    factorize: bool | None = None
 
 
 @router.post("/orders", status_code=201)
 def create_order(body: OrderIn, db: Session = Depends(get_db), user: User = Depends(auth.require("merchant"))):
     m = _own_merchant(db, user)
-    legs = [l.model_dump() if isinstance(l, LegIn) else l for l in body.legs] if body.legs else None
     try:
         with money_lock:
-            order, out = settlement.create_order(
-                db, m.id, [i.model_dump() for i in body.items], body.device_id, body.factorize,
-                legs, body.plan_source, body.rationale, body.fallback_reason, body.model)
-    except settlement.SentinelBlocked as e:
-        return JSONResponse(status_code=422, content={
-            "detail": "Split rejected by the Anti-Structuring Sentinel", "error": "sentinel_blocked",
-            "reasons": e.verdict["reasons"]})
+            order, out = settlement.create_order(db, m.id, [i.model_dump() for i in body.items], body.device_id)
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:

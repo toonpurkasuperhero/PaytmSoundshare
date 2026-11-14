@@ -44,20 +44,14 @@ function LegCard({ leg, isMock, rails, onPaid, current, now }) {
     <div className={`flex min-w-0 flex-col gap-2 rounded-xl border p-3 ${current ? 'border-primary bg-white shadow-focus' : leg.status === 'paid' ? 'border-emerald-200 bg-emerald-50/50' : 'border-outline-variant bg-surface-subtle'}`}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-label-sm font-bold uppercase tracking-wider text-on-surface-variant">
-          Leg {leg.seq} of {leg.of}
+          Payment QR
         </span>
         <Pill status={leg.status} dot />
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 text-label-md text-paytm-navy">
-        <span className={`code-chip ${services ? 'code-services' : 'code-goods'}`}>{services ? 'services' : 'goods'}</span>
-        <span className="min-w-0 break-words">{leg.label}</span>
-      </div>
       <div className="tnum text-headline-md font-extrabold text-paytm-navy">{inr(leg.amount_paise)}</div>
-      {leg.reason && <p className="border-l-2 border-paytm-cyan pl-2 text-body-sm italic text-on-surface">{leg.reason}</p>}
-      {leg.supplier_gstin && <div className="font-mono text-[11px] text-on-surface-variant">GSTIN {leg.supplier_gstin}</div>}
       {qr && (
         <div className="flex flex-col items-center gap-1 rounded-lg border border-outline-variant bg-white p-2">
-          <img src={qr} alt={`UPI QR code for leg ${leg.seq}`} width="168" height="168" className="h-[168px] w-[168px]" />
+          <img src={qr} alt="UPI QR code for this bill" width="168" height="168" className="h-[168px] w-[168px]" />
           <Countdown ts={leg.expires_at} now={now} />
           {leg.checkout_url && (
             <a href={leg.checkout_url} target="_blank" rel="noreferrer" className="text-body-sm font-semibold text-paytm-navy underline">
@@ -71,9 +65,7 @@ function LegCard({ leg, isMock, rails, onPaid, current, now }) {
           <Icon name="check_circle" fill className="text-[20px] text-success-green" />
           <div>
             <div className="font-semibold">Paid via {railLabel(leg.rail)}</div>
-            <div className="text-on-surface-variant">
-              MDR {inr(leg.mdr_paise)} {leg.paid_at ? `· ${time(leg.paid_at)}` : ''}
-            </div>
+            {leg.paid_at && <div className="text-on-surface-variant">{time(leg.paid_at)}</div>}
           </div>
         </div>
       )}
@@ -160,8 +152,6 @@ export default function OrderView({ orderId, onClose, readOnly = false }) {
   const currentLeg = legs.find((l) => l.status === 'active');
   const paid = legs.filter((l) => l.status === 'paid').reduce((s, l) => s + (l.amount_paise || 0), 0);
   const cancellable = !readOnly && ['created', 'awaiting_payment', 'partially_paid'].includes(order.status);
-  const sentinel = order.sentinel;
-  const div = order.division;
 
   return (
     <div className="space-y-4">
@@ -210,33 +200,7 @@ export default function OrderView({ orderId, onClose, readOnly = false }) {
             <div className="text-label-sm text-on-surface-variant">Collected</div>
             <div className="tnum text-headline-md font-extrabold text-success-green">{inr(paid)}</div>
           </div>
-          {sentinel && (
-            <div>
-              <div className="text-label-sm text-on-surface-variant">Sentinel</div>
-              <Pill status={sentinel.decision} dot>
-                {sentinel.decision === 'allow' ? 'allowed' : sentinel.decision}
-              </Pill>
-            </div>
-          )}
         </div>
-        {sentinel?.reasons?.length > 0 && (
-          <ul className={`mt-3 list-disc rounded-lg border py-2 pl-7 pr-3 text-body-sm ${sentinel.decision === 'allow' ? 'border-outline-variant bg-surface-subtle' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
-            {sentinel.reasons.map((r, i) => (
-              <li key={i}>{reasonText(r)}</li>
-            ))}
-          </ul>
-        )}
-
-        {div && (
-          <div className="mt-3 rounded-lg border border-outline-variant bg-surface-subtle p-2.5 text-body-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-paytm-navy">Bill division</span>
-              <SourceBadge source={div.source} model={div.model} reason={div.fallback_reason} />
-            </div>
-            {div.rationale && <p className="mt-1 text-on-surface-variant">{div.rationale}</p>}
-          </div>
-        )}
-
         <details className="mt-3 rounded-lg border border-outline-variant">
           <summary className="cursor-pointer px-3 py-2 text-label-md text-paytm-navy">
             {order.items?.length || 0} item{order.items?.length === 1 ? '' : 's'}
@@ -253,7 +217,6 @@ export default function OrderView({ orderId, onClose, readOnly = false }) {
                     <td>
                       <div className="flex flex-wrap items-center gap-1">
                         {codeLabel(it) && <span className={`code-chip ${supplyOf(it) === 'services' ? 'code-services' : 'code-goods'}`}>{codeLabel(it)}</span>}
-                        {it.classification_source && <SourceBadge source={it.classification_source} />}
                       </div>
                     </td>
                     <td className="text-on-surface-variant">{it.brand || ''}</td>
@@ -264,12 +227,6 @@ export default function OrderView({ orderId, onClose, readOnly = false }) {
             </table>
           </div>
         </details>
-
-        {legs.length > 1 && (
-          <p className="mt-3 text-body-sm text-on-surface-variant">
-            Split into {legs.length} GST invoices along a supply boundary. The fee is calculated after payment from the rail the customer actually used.
-          </p>
-        )}
 
         <div className={`mt-3 grid gap-3 ${legs.length >= 3 ? 'sm:grid-cols-2 2xl:grid-cols-3' : legs.length === 2 ? 'sm:grid-cols-2' : ''}`}>
           {legs.map((l) => (
@@ -285,7 +242,7 @@ export default function OrderView({ orderId, onClose, readOnly = false }) {
       </Card>
 
       {order.settlement && (
-        <Card title="Settlement" icon="account_balance_wallet" subtitle="Where every rupee of this sale went">
+        <Card title="Payment & ad earnings" icon="account_balance_wallet" subtitle="Full payment received, plus what the counter ad earned you">
           <Settlement order={order} />
         </Card>
       )}

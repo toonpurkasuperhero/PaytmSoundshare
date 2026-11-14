@@ -7,11 +7,10 @@ import { Empty } from './ui.jsx';
 export const ROLES = [
   { key: 'customer', label: 'Customer', color: '#002970', test: /customer|payer|buyer/i },
   { key: 'merchant', label: 'Merchant', color: '#00BAF2', test: /merchant|store|shop/i },
-  { key: 'acquirer', label: 'Acquirer / network', color: '#EA580C', test: /acquir|network|mdr|bank/i },
-  { key: 'pool', label: 'Sponsor pool', color: '#00B06F', test: /pool|rebate/i },
-  { key: 'advertiser', label: 'Advertisers', color: '#E53935', test: /advertis|sponsor|wallet|brand|campaign|subvention/i },
+  { key: 'pool', label: 'Ad money per bill', color: '#00B06F', test: /pool|rebate/i },
+  { key: 'advertiser', label: 'Advertisers', color: '#E53935', test: /advertis|sponsor|wallet|brand|campaign/i },
   { key: 'funding', label: 'Wallet top-ups', color: '#7DD3FC', test: /funding|top-?up/i },
-  { key: 'rental', label: 'Rental credit', color: '#F5A623', test: /rental/i },
+  { key: 'rental', label: 'Soundbox rental', color: '#F5A623', test: /rental/i },
   { key: 'platform', label: 'Paytm platform', color: '#0F4A8A', test: /paytm|platform|revenue|spread/i },
   { key: 'gst', label: 'GST', color: '#94A3B8', test: /gst|tax/i },
 ];
@@ -19,17 +18,17 @@ const COLOR = Object.fromEntries(ROLES.map((r) => [r.key, r.color]));
 COLOR.other = '#64748B';
 
 // Known ledger account ids map straight to a role; anything else falls back to regex.
-const ID_ROLES = { customer: 'customer', acquirer: 'acquirer', sponsor_pool: 'pool', platform: 'platform', funding: 'funding' };
+const ID_ROLES = { customer: 'customer', soundbox_rental: 'rental', sponsor_pool: 'pool', platform: 'platform', funding: 'funding' };
 
 function roleOf(node) {
   const id = String(node.id);
   if (ID_ROLES[id]) return ID_ROLES[id];
-  if (id.startsWith('merchant:')) return 'merchant';
+  if (id.startsWith('merchant:') || id.startsWith('merchant_earnings:')) return 'merchant';
   if (id.startsWith('adv:') || id.startsWith('advertiser')) return 'advertiser';
   if (id.startsWith('soundbox_rental') || id.startsWith('rental')) return 'rental';
   const s = `${node.id} ${node.label || ''}`;
   if (/funding|top-?up/i.test(s)) return 'funding';
-  for (const k of ['rental', 'pool', 'platform', 'acquirer', 'customer', 'advertiser', 'merchant', 'gst']) {
+  for (const k of ['rental', 'pool', 'platform', 'customer', 'advertiser', 'merchant', 'gst']) {
     const r = ROLES.find((x) => x.key === k);
     if (r.test.test(s)) return r.key;
   }

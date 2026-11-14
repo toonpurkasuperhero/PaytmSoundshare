@@ -1,10 +1,15 @@
-"""SoundShare settlement engine: the order lifecycle from bill to balanced ledger.
+"""SoundShare settlement engine: one bill -> one QR -> payment -> counter ad money -> merchant earnings.
 
-    create_order -> (leg QR shown) -> confirm_leg x N -> begin_settlement
+    create_order -> QR shown (+ counter ad starts) -> confirm_leg -> begin_settlement
       -> payment_success on device -> play_ack / timeout -> finalize
 
-All money movement happens under `money_lock` inside one DB transaction, and
-device messages are sent only after the commit.
+Money flow for each paid bill:
+  * the customer's payment goes to the merchant in full (no fee handling, no bill splitting);
+  * the counter ad's money (charged only if it played fully and the bill was paid) goes:
+      platform share -> this month's Soundbox rental -> the merchant's ad earnings.
+
+All money movement happens under `money_lock` inside one DB transaction, and device messages
+are sent only after the commit.
 """
 from __future__ import annotations
 
@@ -17,25 +22,26 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import adx, announcer, factorizer, ledger, mdr, sentinel, tags
+from . import adx, announcer, factorizer, kyc, ledger, planner, sentinel, tags
 from .config import settings
 from .db import money_lock, session_scope
 from .hub import device_url, hub, public_url
-from .models import Campaign, Device, Hold, LedgerEntry, Leg, Merchant, Order, OrderItem, TopUp, utcnow
+from .models import Advertiser, Campaign, Device, Hold, LedgerEntry, Leg, Merchant, Order, OrderItem, TopUp, utcnow
 from .money import announce_tokens, new_id, order_id
 from .payments import PaymentStatus, ProviderError, get_provider, provider_by_name
 
 log = logging.getLogger("zeromdr.settlement")
 
 LATENCIES_MS: deque[float] = deque(maxlen=500)
-
-
-# SoundShare money flow for each settled sale (see _finalize):
-#   ad money -> this sale's fee -> platform cut -> this merchant's Soundbox rental -> SHARED_POOL
-#   SHARED_POOL -> other merchants' fee shortfalls (daily cap each) -> their rentals (above a fee reserve)
-SHARED_POOL = "shared_pool"
+MIN_PLAY_FRACTION = 0.8
+MIC_NOISE_FLOOR_DB = -50.0
 RENTAL_ACCOUNT = "soundbox_rental"
 IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def earnings_account(merchant_id: str) -> str:
+    """Ledger account holding a merchant's ad earnings (after their Soundbox rental is paid)."""
+    return f"merchant_earnings:{merchant_id}"
 
 
 def rental_ref(merchant_id: str, when: datetime | None = None) -> str:
@@ -51,20 +57,7 @@ def rental_due(db: Session, merchant: Merchant) -> int:
     return max(0, merchant.monthly_rental_paise - rental_paid(db, merchant.id))
 
 
-def _ist_day_start() -> datetime:
-    return datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-
-
-def shared_draw_left_today(db: Session, merchant_id: str) -> int:
-    drawn = db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0)).where(
-        LedgerEntry.account == f"merchant:{merchant_id}", LedgerEntry.memo == "MDR covered by the SoundShare pool",
-        LedgerEntry.ts >= _ist_day_start())).scalar_one()
-    return max(0, settings.shared_pool_daily_cap_paise - drawn)
-MIN_PLAY_FRACTION = 0.8
-MIC_NOISE_FLOOR_DB = -50.0
-
-
-class SentinelBlocked(Exception):
+class SentinelBlocked(Exception):  # kept for API compatibility; bills are no longer split
     def __init__(self, verdict: dict):
         super().__init__("sentinel_blocked")
         self.verdict = verdict
@@ -97,10 +90,6 @@ def bill_messages(order: Order) -> list[dict]:
     msgs = [{"type": "show_bill", "orderId": order.id,
              "items": [{"name": i.name, "qty": i.qty, "amount": i.amount_paise} for i in order.items],
              "total": order.total_paise}]
-    if len(order.legs) > 1:
-        msgs.append({"type": "show_split", "orderId": order.id, "total": order.total_paise,
-                     "legs": [{"seq": l.seq, "label": l.label, "amount": l.amount_paise} for l in order.legs],
-                     "note": "Separate GST invoices. Fee is calculated after payment."})
     active = next((l for l in order.legs if l.status == "active"), None)
     if active:
         msgs.append(qr_message(order, active))
@@ -108,7 +97,7 @@ def bill_messages(order: Order) -> list[dict]:
 
 
 def qr_message(order: Order, leg: Leg) -> dict:
-    return {"type": "show_qr", "orderId": order.id, "legId": leg.id, "seq": leg.seq, "of": leg.of,
+    return {"type": "show_qr", "orderId": order.id, "legId": leg.id, "seq": 1, "of": 1,
             "qrData": leg.qr_data or leg.qr_image_url, "amount": leg.amount_paise,
             "expiresAt": _ts(leg.expires_at)}
 
@@ -117,8 +106,7 @@ def _activate_leg(db: Session, order: Order, leg: Leg, merchant: Merchant) -> No
     provider = get_provider()
     expires = utcnow() + timedelta(minutes=settings.qr_expiry_min)
     created = provider.create_payment(
-        ref=leg.id, amount_paise=leg.amount_paise,
-        description=f"{merchant.name} {order.id} {leg.seq}/{leg.of} {leg.label}",
+        ref=leg.id, amount_paise=leg.amount_paise, description=f"{merchant.name} {order.id}",
         expires_at=expires, pos_id=order.device_id or "POS1",
     )
     leg.provider = provider.name
@@ -133,13 +121,8 @@ def _activate_leg(db: Session, order: Order, leg: Leg, merchant: Merchant) -> No
 # ------------------------------------------------------------------ orders
 
 def create_order(db: Session, merchant_id: str, items_in: list[dict], device_id: str | None,
-                 factorize: bool | None, legs_in: list | None = None, plan_source: str | None = None,
-                 rationale: str | None = None, fallback_reason: str | None = None,
-                 model: str | None = None) -> tuple[Order, Outbox]:
-    """legs_in: item-index groups from a reviewed plan ([[1],[0]] or [{"item_indexes":[1],"reason":..}]).
-    Without legs_in the bill is planned now (AI classification + AI division)."""
-    from . import planner
-
+                 *_ignored, **_ignored_kw) -> tuple[Order, Outbox]:
+    """One bill, one payment QR for the full amount."""
     merchant = db.get(Merchant, merchant_id)
     if not merchant:
         raise LookupError("merchant not found")
@@ -151,29 +134,12 @@ def create_order(db: Session, merchant_id: str, items_in: list[dict], device_id:
         device_id = merchant.devices[0].id
     if not items_in or sum(int(i.get("qty") or 1) * int(i.get("unit_price") or 0) for i in items_in) <= 0:
         raise ValueError("bill must have at least one item with a positive amount")
-    fz = merchant.factorization_enabled if factorize is None else factorize
 
-    if legs_in:
-        classified, _, _ = factorizer.classify(planner.apply_catalog(db, merchant, items_in))
-        items = factorizer.normalize(classified, merchant.gstin)
-        groups = [l["item_indexes"] if isinstance(l, dict) else l for l in legs_in]
-        reasons = [str(l.get("reason") or "") if isinstance(l, dict) else "" for l in legs_in]
-        plans = factorizer.legs_from_indexes(items, groups, reasons)
-        division = {"source": plan_source or "manual", "fallback_reason": fallback_reason,
-                    "rationale": rationale, "model": model if plan_source == "ai" else None}
-    else:
-        plan, items, plans = planner.build(db, merchant, items_in, fz)
-        division = {k: plan[k] for k in ("source", "fallback_reason", "rationale", "model")}
+    items = factorizer.normalize(planner.apply_catalog(db, merchant, items_in), merchant.gstin)
     total = sum(i.amount for i in items)
     oid = order_id()
-    verdict = sentinel.check_plan(db, merchant, items, plans, custom=True, ref=f"order:{oid}")
-    if verdict["decision"] == "block":
-        db.commit()  # persist the flags
-        hub.emit("sentinel_flag", ref=f"order:{oid}", decision="block")
-        raise SentinelBlocked(verdict)
-
-    order = Order(id=oid, merchant_id=merchant.id, device_id=device_id, status="created",
-                  total_paise=total, factorize=fz, sentinel=verdict, division=division)
+    order = Order(id=oid, merchant_id=merchant.id, device_id=device_id, status="created", total_paise=total,
+                  factorize=False, sentinel={"decision": "allow", "reasons": []}, division={"source": "single"})
     db.add(order)
     rows = []
     for it in items:
@@ -184,10 +150,8 @@ def create_order(db: Session, merchant_id: str, items_in: list[dict], device_id:
         db.add(row)
         rows.append(row)
     db.flush()
-    for seq, lp in enumerate(plans, start=1):
-        db.add(Leg(id=new_id("L", 5), order_id=oid, seq=seq, of=len(plans), label=lp.label, reason=lp.reason or None,
-                   supply_type=lp.supply_type, supplier_gstin=lp.supplier_gstin, amount_paise=lp.amount,
-                   item_ids=[rows[i].id for i in lp.item_idx], status="pending"))
+    db.add(Leg(id=new_id("L", 5), order_id=oid, seq=1, of=1, label="Bill", supply_type="goods",
+               supplier_gstin=merchant.gstin, amount_paise=total, item_ids=[r.id for r in rows], status="pending"))
     db.flush()
     db.refresh(order)
     try:
@@ -284,42 +248,27 @@ def confirm_leg(leg_id: str, status: PaymentStatus) -> None:
             out.msgs.append({"type": "payment_failed", "orderId": order.id, "legId": leg.id, "reason": status.state})
             out.events.append(("order_update", {"order_id": order.id, "status": "failed"}))
         elif status.state == "paid":
-            _apply_leg_payment(db, order, leg, merchant, status, out)
+            _apply_payment(db, order, leg, merchant, status, out)
         else:
             return
     out.flush()
 
 
-def _apply_leg_payment(db: Session, order: Order, leg: Leg, merchant: Merchant,
-                       status: PaymentStatus, out: Outbox) -> None:
+def _apply_payment(db: Session, order: Order, leg: Leg, merchant: Merchant, status: PaymentStatus,
+                   out: Outbox) -> None:
     leg.status = "paid"
     leg.rail = status.rail or "UNKNOWN"
     leg.payer_ref = status.payer_ref
     leg.provider_txn_id = status.txn_id
     leg.payment_mode_raw = status.raw or None
     leg.paid_at = utcnow()
-    leg.mdr_paise = mdr.mdr_total(leg.amount_paise, leg.rail)
     ref = f"order:{order.id}"
-    ledger.post(db, ref, f"Leg {leg.seq}/{leg.of} {leg.label} paid via {leg.rail}", [
-        ("customer", -leg.amount_paise),
-        (f"merchant:{merchant.id}", leg.amount_paise - leg.mdr_paise),
-        ("acquirer", leg.mdr_paise),
-    ])
-    verdict = sentinel.check_payment(db, merchant, leg)
+    ledger.post(db, ref, f"Bill paid via {leg.rail}",
+                [("customer", -leg.amount_paise), (f"merchant:{merchant.id}", leg.amount_paise)])
+    verdict = sentinel.check_payment(db, merchant, leg)  # e.g. a merchant paying itself to farm ad money
     if verdict["deny_subsidy"]:
-        order.sentinel = {**(order.sentinel or {}), "deny_subsidy": True,
-                          "post_payment": verdict["reasons"]}
-        out.events.append(("sentinel_flag", {"ref": ref, "decision": "deny_subsidy"}))
-    out.msgs.append({"type": "leg_paid", "orderId": order.id, "legId": leg.id, "seq": leg.seq,
-                     "of": leg.of, "amount": leg.amount_paise, "rail": leg.rail})
-
-    nxt = next((l for l in order.legs if l.status == "pending"), None)
-    if nxt:
-        _activate_leg(db, order, nxt, merchant)
-        order.status = "partially_paid"
-        out.msgs.append(qr_message(order, nxt))
-        out.events.append(("order_update", {"order_id": order.id, "status": order.status}))
-        return
+        order.sentinel = {**(order.sentinel or {}), "deny_subsidy": True, "post_payment": verdict["reasons"]}
+        out.events.append(("sentinel_flag", {"ref": ref, "decision": "deny_ad_money"}))
     order.status = "paid"
     order.paid_at = utcnow()
     _begin_settlement(db, order, merchant, out)
@@ -333,58 +282,33 @@ def _commit_hold(db: Session, hold: Hold, memo: str) -> None:
 
 
 def _begin_settlement(db: Session, order: Order, merchant: Merchant, out: Outbox) -> None:
-    legs = order.legs
-    mdr_due = sum(l.mdr_paise or 0 for l in legs)
-    biggest = max(legs, key=lambda l: l.amount_paise)
-    mdr_unsplit = mdr.mdr_total(order.total_paise, biggest.rail) if len(legs) > 1 else mdr_due
     deny = bool((order.sentinel or {}).get("deny_subsidy"))
-
-    expected = 0
     counter = db.scalars(select(Hold).where(Hold.order_id == order.id, Hold.kind.in_(("audio", "tag")),
                                             Hold.status == "reserved")).first()
-    audio_c: Campaign | None = counter.campaign if counter else None
+    camp: Campaign | None = counter.campaign if counter else None
     tag_clip = None
     if counter and deny:  # no ad money from self-payments
         counter.status, counter.release_reason, counter.resolved_at = "released", "self_dealing", utcnow()
-        counter, audio_c = None, None
+        counter, camp = None, None
     elif counter and counter.kind == "audio":
         if counter.verified:  # played fully while the customer paid -> charge now
-            _commit_hold(db, counter, f"Verified ad play during payment: {audio_c.advertiser.name}")
+            _commit_hold(db, counter, f"Verified ad play during payment: {camp.advertiser.name}")
         elif not counter.sent_at:  # device was offline when the QR went up: nothing played
             counter.status, counter.release_reason, counter.resolved_at = "released", "not_played", utcnow()
-            counter, audio_c = None, None
+            counter, camp = None, None
         # else: still playing -> its play_ack settles it, then the payment message plays
     elif counter and counter.kind == "tag":
         try:
-            h_, dur = tags.ensure(audio_c.advertiser.name, merchant.lang)
+            h_, dur = tags.ensure(camp.advertiser.name, merchant.lang)
             counter.duration_ms, counter.sent_at = dur, utcnow()
             tag_clip = {"hash": h_, "url": device_url(order.device_id, f"/media/audio/{h_}.mp3"), "durationMs": dur,
-                        "advertiser": audio_c.advertiser.name, "kind": "tag"}
+                        "advertiser": camp.advertiser.name, "kind": "tag"}
         except Exception as e:  # no voice for the tag: don't charge for a tag that can't play
             log.warning("sponsor tag unavailable: %s", e)
             counter.status, counter.release_reason, counter.resolved_at = "released", "tag_unavailable", utcnow()
-            counter, audio_c = None, None
-    if counter:
-        expected += counter.amount_paise
+            counter, camp = None, None
 
-    sponsors = [] if deny else adx.pick_subvention(db, merchant, order.items, mdr_due - expected)
-    for c in sponsors:
-        h = Hold(id=new_id("P", 5), advertiser_id=c.advertiser_id, campaign_id=c.id, order_id=order.id,
-                 device_id=order.device_id, kind="subvention", amount_paise=c.bid_paise)
-        db.add(h)
-        db.flush()
-        _commit_hold(db, h, f"Brand subvention: {c.advertiser.name}")
-        expected += c.bid_paise
-
-    pool_bal = 0 if deny else max(0, min(ledger.balance(db, SHARED_POOL), shared_draw_left_today(db, merchant.id)))
-    covered_expected = min(mdr_due, expected + pool_bal)
-    order.settlement = {
-        "mdr_paise": mdr_due, "mdr_unsplit_paise": mdr_unsplit,
-        "saved_by_factorization_paise": max(0, mdr_unsplit - mdr_due),
-        "status": "pending_ack",
-    }
-    covered_by = ([{"name": c.advertiser.name, "amount": c.bid_paise} for c in sponsors]
-                  + ([{"name": audio_c.advertiser.name, "amount": counter.amount_paise}] if counter else []))
+    order.settlement = {"status": "pending_ack", "merchant_receives_paise": order.total_paise}
     tokens, text = announce_tokens(order.total_paise, merchant.lang)
     lang_ = merchant.lang if merchant.lang in ("en", "hi") else "en"  # local clip packs: en/hi
     msg = {
@@ -392,23 +316,15 @@ def _begin_settlement(db: Session, order: Order, merchant: Merchant, out: Outbox
         "announce": tokens if lang_ == merchant.lang else announce_tokens(order.total_paise, lang_)[0],
         "announceText": text,
         "announceUrl": (device_url(order.device_id, f"/api/announce/{order.id}.mp3")
-                        if announcer.available(merchant.lang) else None), "playId": None, "ad": None, "banner": None, "offerQr": None,
-        "settlement": {
-            "mdr": mdr_due, "merchantReceives": order.total_paise - mdr_due + covered_expected,
-            "coveragePct": round(100.0 * covered_expected / mdr_due, 1) if mdr_due else 100.0,
-            "coveredBy": covered_by,
-        },
+                        if announcer.available(merchant.lang) else None),
+        "playId": None, "ad": None, "banner": None, "offerQr": None, "settlement": None,
     }
-    if audio_c:
-        cr = audio_c.creative
+    if camp:
+        cr = camp.creative
         msg["banner"] = cr.banner
         msg["offerQr"] = public_url(order.device_id, f"/api/offers/{cr.id}/claim?d={order.device_id or ''}")
         if tag_clip:  # busy hour: the sponsor tag plays right after the payment message
             msg["playId"], msg["ad"] = counter.id, tag_clip
-        # normal hours: the full ad already played (or is finishing) while the customer paid
-    elif sponsors:
-        b = sponsors[0].creative.banner if sponsors[0].creative else None
-        msg["banner"] = b
     out.msgs.append(msg)
     out.events.append(("order_update", {"order_id": order.id, "status": "paid"}))
 
@@ -417,59 +333,34 @@ def _begin_settlement(db: Session, order: Order, merchant: Merchant, out: Outbox
 
 
 def _finalize(db: Session, order: Order, out: Outbox) -> None:
+    """Ad money for this bill: platform share -> this month's Soundbox rental -> merchant's earnings."""
     holds = db.scalars(select(Hold).where(Hold.order_id == order.id)).all()
     if any(h.status == "reserved" for h in holds):
         return
-    s = dict(order.settlement or {})
-    mdr_due = s.get("mdr_paise", 0)
-    funds = sum(h.amount_paise for h in holds if h.status == "committed")
-    ref = f"order:{order.id}"
     merchant = db.get(Merchant, order.merchant_id)
-    merchant_acct = f"merchant:{merchant.id}"
-    deny = bool((order.sentinel or {}).get("deny_subsidy"))
-
-    # 1. This sale's ad money covers this sale's fee first.
-    covered_ads = min(mdr_due, funds)
-    ledger.post(db, ref, "MDR rebate to merchant (sponsor-funded)",
-                [("sponsor_pool", -covered_ads), (merchant_acct, covered_ads)])
-    # 2. Shortfall: the shared SoundShare pool (other merchants' surplus), within a daily cap.
-    drawn = 0
-    if mdr_due > covered_ads and not deny:
-        drawn = min(mdr_due - covered_ads, max(0, ledger.balance(db, SHARED_POOL)),
-                    shared_draw_left_today(db, merchant.id))
-        ledger.post(db, ref, "MDR covered by the SoundShare pool", [(SHARED_POOL, -drawn), (merchant_acct, drawn)])
-    # 3. Surplus: platform cut -> this merchant's Soundbox rental for the month -> shared pool.
-    surplus = funds - covered_ads
-    spread = round(surplus * settings.platform_surplus_take_pct / 100)
-    ledger.post(db, ref, "Platform spread", [("sponsor_pool", -spread), ("platform", spread)])
-    rest = surplus - spread
-    rental = min(rest, rental_due(db, merchant)) if not deny else 0
+    ref = f"order:{order.id}"
+    ad_money = sum(h.amount_paise for h in holds if h.status == "committed")
+    platform = round(ad_money * settings.platform_surplus_take_pct / 100)
+    ledger.post(db, ref, "Platform share of ad revenue", [("sponsor_pool", -platform), ("platform", platform)])
+    rest = ad_money - platform
+    rental = min(rest, rental_due(db, merchant))
     ledger.post(db, rental_ref(merchant.id), f"Soundbox rental paid by ads ({order.id})",
                 [("sponsor_pool", -rental), (RENTAL_ACCOUNT, rental)])
-    shared = rest - rental
-    ledger.post(db, ref, "Ad surplus shared with the SoundShare pool", [("sponsor_pool", -shared), (SHARED_POOL, shared)])
-    # 4. Shared pool also pays this merchant's unpaid rental, keeping a reserve for fees first.
-    rental_from_pool = 0
-    if not deny and rental_due(db, merchant) > 0:
-        spare = ledger.balance(db, SHARED_POOL) - settings.shared_pool_fee_reserve_paise
-        rental_from_pool = max(0, min(spare, rental_due(db, merchant)))
-        ledger.post(db, rental_ref(merchant.id), f"Soundbox rental paid by the SoundShare pool ({order.id})",
-                    [(SHARED_POOL, -rental_from_pool), (RENTAL_ACCOUNT, rental_from_pool)])
-    covered = covered_ads + drawn
-    s.update({
-        "ad_liquidity_paise": funds, "covered_paise": covered,
-        "covered_by_ads_paise": covered_ads, "shared_drawn_paise": drawn,
-        "rental_paid_paise": rental + rental_from_pool, "rental_from_pool_paise": rental_from_pool,
-        "shared_contributed_paise": shared, "shared_pool_balance_paise": ledger.balance(db, SHARED_POOL),
-        "coverage_pct": round(100.0 * covered / mdr_due, 1) if mdr_due else 100.0,
-        "merchant_receives_paise": order.total_paise - mdr_due + covered,
-        "acquirer_paise": mdr_due, "platform_paise": spread,
+    earnings = rest - rental
+    ledger.post(db, ref, "Ad earnings for the merchant",
+                [("sponsor_pool", -earnings), (earnings_account(merchant.id), earnings)])
+    order.settlement = {
+        "status": "settled",
+        "merchant_receives_paise": order.total_paise,
+        "ad_revenue_paise": ad_money,
+        "platform_paise": platform,
+        "rental_paid_paise": rental,
+        "earnings_paise": earnings,
+        "rental_due_after_paise": rental_due(db, merchant),
         "sponsors": [{"advertiser_id": h.advertiser_id, "name": h.advertiser.name, "kind": h.kind,
                       "amount_paise": h.amount_paise, "status": h.status,
                       **({"release_reason": h.release_reason} if h.release_reason else {})} for h in holds],
-        "status": "settled",
-    })
-    order.settlement = s
+    }
     order.status = "settled"
     order.settled_at = utcnow()
     out.events.append(("order_update", {"order_id": order.id, "status": "settled"}))
@@ -544,6 +435,7 @@ def create_topup(db: Session, advertiser_id: str, amount_paise: int) -> TopUp:
         t.status = "paid"
         ledger.post(db, f"topup:{t.id}", "Advertiser wallet top-up",
                     [("funding", -amount_paise), (f"adv:{advertiser_id}", amount_paise)])
+        kyc.activate_ready(db, db.get(Advertiser, advertiser_id))
     else:
         created = provider.create_payment(ref=t.id, amount_paise=amount_paise,
                                           description=f"SoundShare ad wallet top-up {t.id}",
@@ -562,6 +454,7 @@ def confirm_topup(topup_id: str, status: PaymentStatus) -> None:
             t.status = "paid"
             ledger.post(db, f"topup:{t.id}", "Advertiser wallet top-up",
                         [("funding", -t.amount_paise), (f"adv:{t.advertiser_id}", t.amount_paise)])
+            kyc.activate_ready(db, db.get(Advertiser, t.advertiser_id))
         elif status.state in ("failed", "expired"):
             t.status = "failed"
 
@@ -569,7 +462,7 @@ def confirm_topup(topup_id: str, status: PaymentStatus) -> None:
 # ------------------------------------------------------------------ provider polling
 
 def poll_once() -> None:
-    """Poll non-mock providers for pending legs / top-ups (works without public webhooks)."""
+    """Poll non-mock providers for pending bills / top-ups (works without public webhooks)."""
     with session_scope() as db:
         legs = [(l.id, l.provider, l.provider_ref) for l in db.scalars(
             select(Leg).where(Leg.status == "active", Leg.provider != "mock", Leg.provider_ref.is_not(None)))]

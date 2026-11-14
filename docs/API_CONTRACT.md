@@ -1,14 +1,16 @@
-# SoundShare: API & Device Protocol Contract (v2)
+# SoundShare: API & Device Protocol Contract (v3)
 
 The backend (FastAPI) runs at `http://<host>:8000`. All REST routes are under `/api`.
 **Money is always an integer in paise** (₹6,500.00 = `650000`). Timestamps are ISO-8601 with a UTC offset.
 Errors use the shape `{"detail": "...", "error": "<code>"?, "reasons": [...]?}`.
 
-**Product rules (v2):**
-- **There is no seeded or demo data.** Merchants and advertisers sign up themselves, and the admin account comes from env vars.
-- **AI is the primary path** for ad creation and bill division, using Google Gemini. Deterministic fallbacks run **only when the AI call fails**. Every AI-produced object says which path produced it: `"source": "ai" | "fallback"` plus `"fallback_reason"`.
+**Product rules (v3):**
+- **One bill, one QR, full price.** There is no payment fee and no price split. Every order has exactly one leg for the whole amount.
+- **The ad plays while the customer pays.** Ad money for a paid bill with a verified play goes: Paytm share (`PLATFORM_SURPLUS_TAKE_PCT`, default 25%), then this merchant's Soundbox rental for the month, then the merchant's earnings.
+- **AI is the primary path** for ad creation (Gemini copy, Sarvam/Gemini voices, 11 languages) and bill reading. Deterministic fallbacks run **only when every AI call fails**. Every AI-produced object says which path produced it: `"source": "ai" | "fallback"` plus `"fallback_reason"`.
+- Real users sign up themselves; the admin account comes from env vars. Optional demo accounts come from `python -m app.cli seed-demo` and are removed with `remove-demo`.
 
-Rails: `UPI_BANK`, `UPI_RUPAY_CC`, `UPI_PPI`, `DEBIT_CARD`, `CREDIT_CARD`, `NET_BANKING`, `UNKNOWN`.
+Payment methods (`rail`, used by the test-mode simulator): `UPI_BANK`, `UPI_RUPAY_CC`, `UPI_PPI`, `DEBIT_CARD`, `CREDIT_CARD`, `NET_BANKING`.
 
 ---
 
@@ -20,7 +22,7 @@ Roles: `merchant`, `advertiser`, `admin`. Each merchant or advertiser account ow
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/auth/register/merchant` | `{phone, password, name, category, gstin, vpa, lat, lng, address?, lang?}` | `201 Session` |
-| POST | `/api/auth/register/advertiser` | `{phone, password, name, type:"local"\|"brand", category, lat?, lng?, address?}` | `201 Session` |
+| POST | `/api/auth/register/advertiser` | `{phone, password, name, type:"local"\|"brand", category, gstin, lat?, lng?, address?}` | `201 Session`. GSTIN is mandatory (format + check digit) and unique. |
 | POST | `/api/auth/login` | `{phone, password}` | `Session` (`401` on bad credentials, `429` after too many attempts) |
 | GET | `/api/auth/me` | – | `User` |
 | POST | `/api/auth/logout` | – | `{ok:true}` |
@@ -32,7 +34,7 @@ User = {"id":"U-..","phone":"9876543210","role":"merchant","name":"Sharma Electr
 ```
 - Phone: Indian mobile, 10 digits starting 6–9. A `+91` prefix is accepted and stripped.
 - Password: at least 8 characters.
-- GSTIN: 15-character format check. VPA: `name@bank` format.
+- GSTIN: 15-character format and check-digit validation. VPA: `name@bank` format.
 
 Access: a merchant sees only its own merchant, catalog, devices and orders. An advertiser sees only its own advertiser, campaigns and top-ups. Admin sees everything, plus ledger, sentinel and system data.
 `401` = not logged in. `403` = logged in but not allowed.
@@ -44,7 +46,7 @@ Access: a merchant sees only its own merchant, catalog, devices and orders. An a
 ### Public
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/config` | `{provider, provider_mode:"test"\|"live", rails, mdr_rates, gst_rate, base_url, ai:{configured:bool, text_model, tts_model}}` |
+| GET | `/api/config` | `{provider, provider_mode:"test"\|"live", rails, base_url, ai:{configured:bool, text_model, tts_model}, sarvam:{configured}, languages:[{code,label,...}]}` |
 | GET | `/api/qr.svg?data=&scale=8` | SVG QR |
 | GET | `/api/offers/{creative_id}/claim?d=<deviceId>` | HTML page. Records a claim. |
 | POST | `/api/webhooks/paytm`, `/api/webhooks/razorpay` | Payment provider webhooks (signature-verified) |
@@ -58,57 +60,56 @@ Access: a merchant sees only its own merchant, catalog, devices and orders. An a
 |---|---|---|---|---|
 | GET | `/api/merchants` | admin | – | `Merchant[]` |
 | GET | `/api/merchants/{id}` | owner/admin | – | `Merchant` with `stats` |
-| PATCH | `/api/merchants/{id}` | owner | `{name?, blocked_categories?, factorization_enabled?, lang?, vpa?, lat?, lng?, address?}` | `Merchant` |
+| PATCH | `/api/merchants/{id}` | owner | `{name?, blocked_categories?, busy_mode?, lang?, vpa?, lat?, lng?, address?}` | `Merchant` |
+| GET | `/api/merchants/{id}/earnings?days=30` | owner/admin | – | `EarningsTracker` |
 | GET | `/api/merchants/{id}/catalog` | owner/admin | – | `CatalogItem[]` |
-| POST | `/api/merchants/{id}/catalog` | owner | `{name, unit_price, hsn_sac?, category?, brand?}` | `201 CatalogItem`. **AI classifies** HSN/SAC, category and brand when they're missing. |
+| POST | `/api/merchants/{id}/catalog` | owner | `{name, unit_price, hsn_sac?, category?, brand?}` | `201 CatalogItem` (stored as entered, `source:"manual"`) |
 | PATCH | `/api/merchants/{id}/catalog/{item_id}` | owner | same fields, all optional | `CatalogItem` |
 | DELETE | `/api/merchants/{id}/catalog/{item_id}` | owner | – | `204` |
 
 ```jsonc
 Merchant = {"id":"M-..","name":"..","category":"electronics","gstin":"..","vpa":"..","lat":..,"lng":..,"address":"..",
-  "lang":"en","factorization_enabled":true,"blocked_categories":[],"device_ids":["SB-.."],
-  "stats": {"tx_count":0,"gross_paise":0,"mdr_paise":0,"covered_paise":0,"coverage_pct":100.0,
-            "saved_by_factorization_paise":0,
-            "rental":{"monthly_fee_paise":12500,"credited_paise":0,"target_tx":100,"sponsored_tx":0}}}
+  "lang":"en","busy_mode":false,"blocked_categories":[],"device_ids":["SB-.."],
+  "stats": {"tx_count":0,"gross_paise":0,"ad_revenue_paise":0,
+            "earnings_lifetime_paise":0,"ad_income_per_play_paise":120|null,"platform_share_pct":25.0,
+            "rental":{"monthly_fee_paise":12500,"paid_this_month_paise":0,"due_paise":12500,"plays_to_cover":139|null}}}
+EarningsTracker = {...Merchant.stats (without tx/gross),
+  "totals":{"today_paise","week_paise","month_paise","lifetime_paise",
+            "rental_paid_lifetime_paise","ad_revenue_lifetime_paise","plays_month","plays_lifetime"},
+  "daily":[{"date":"2026-11-14","earnings_paise","rental_paise","plays"}],      // IST days, oldest first
+  "by_advertiser":[{"advertiser_id","name","plays","tags","ad_revenue_paise"}],
+  "recent":[{"order_id","settled_at","bill_paise","advertisers":["FitZone Gym"],
+             "ad_revenue_paise","rental_paid_paise","earnings_paise"}]}
 CatalogItem = {"id":"C-..","name":"..","unit_price":470000,"hsn_sac":"8509","category":"appliance","brand":"havells"|null,
                "supply_type":"goods"|"services","source":"ai"|"fallback"|"manual"}
 ```
 
-### Bills: AI parse, AI division, orders
+### Bills and orders
 | Method | Path | Who | Body | Returns |
 |---|---|---|---|---|
 | POST | `/api/bills/parse` | merchant | `{text}`, or multipart `image` (bill photo: jpeg/png/webp, ≤ 8 MB) | `{items: ItemIn[], source, fallback_reason?, model?}` |
-| POST | `/api/bills/plan` | merchant | `{items: ItemIn[], factorize?:bool}` | `Plan`: AI classifies every item and proposes the split. The Sentinel validates it. |
-| POST | `/api/orders` | merchant | `OrderCreate` | `201 Order`, or `422 {error:"sentinel_blocked", reasons}` |
+| POST | `/api/orders` | merchant | `{device_id, items: ItemIn[]}` | `201 Order`. One QR for the full total; the ad starts on the Soundbox at once. |
 | GET | `/api/orders?limit=20` | merchant (own) / admin (all, optional `merchant_id`) | – | `Order[]` |
 | GET | `/api/orders/{id}` | owner/admin | – | `Order` |
 | POST | `/api/orders/{id}/cancel` | owner | – | `Order` |
 | POST | `/api/orders/{id}/refresh` | owner | – | `Order` (polls the provider now) |
-| POST | `/api/mock/pay` | merchant owner, or device token | `{leg_id, rail, payer?, device_token?}` | `Order`. **Only when provider is `mock` (test mode)**, otherwise `409`. |
+| POST | `/api/mock/pay` | merchant owner, or device token | `{leg_id, rail, payer?, device_token?}` | `Order`. **Only when provider is `mock` (test mode)**, otherwise `409`. `rail` is required. |
+| GET | `/api/announce/{order_id}.mp3` | device | – | Payment announcement in the merchant's language (Sarvam) |
 
 ```jsonc
-ItemIn = {"name":"..","qty":1,"unit_price":470000,"hsn_sac":"8509"?,"category":".."?,"brand":".."?,
-          "supplier_gstin":".."?,"catalog_item_id":"C-.."?}
-Plan = {
-  "items":[ItemIn & {"hsn_sac","supply_type","category","brand","supplier_gstin","classification_source":"ai"|"fallback"|"catalog"|"manual"}],
-  "legs":[{"item_indexes":[1],"label":"Services (SAC 9987)","supply_type":"services","amount_paise":180000,
-           "reason":"AI's one-line reason this leg is a separate supply"}],
-  "source":"ai"|"fallback", "fallback_reason":null|"..", "model":"gemini-3.8-flash"|null,
-  "rationale":"AI's short explanation of the overall split",
-  "estimate":{"rail_assumed":"UPI_RUPAY_CC","mdr_single_paise":13806,"mdr_split_paise":9983,"saving_paise":3823},
-  "sentinel":{"decision":"allow"|"flag"|"block","reasons":[...]}
-}
-OrderCreate = {"device_id":"SB-..", "items":[ItemIn (classified, e.g. from Plan.items)],
-               "legs":[[1],[0]]?,               // item indexes per leg, normally Plan.legs[].item_indexes
-               "plan_source":"ai"|"fallback"|"manual"?, "rationale":".."?,
-               "factorize":true?}
-// legs omitted → the server plans with AI (slower). The Sentinel always re-validates.
+ItemIn = {"name":"..","qty":1,"unit_price":470000,"hsn_sac":".."?,"category":".."?,"brand":".."?,"catalog_item_id":"C-.."?}
 Order = {"id","merchant_id","device_id","status","total_paise","created_at","paid_at","settled_at",
-         "items":[...], "legs":[Leg...], "settlement":Settlement|null, "sentinel":{...},
-         "division":{"source":"ai"|"fallback"|"manual","fallback_reason":..,"rationale":..,"model":..}}
+         "items":[...], "legs":[Leg],          // always exactly one leg = the full bill
+         "settlement":Settlement|null}
+Leg = {"id","seq":1,"of":1,"amount_paise","status":"active"|"paid"|..,"qr_data","qr_image_url","checkout_url","expires_at","rail","paid_at"}
+Settlement = {"status":"pending_ack"|"settled",
+  "merchant_receives_paise":650000,     // the full bill
+  "ad_revenue_paise":120,               // committed ad money for this bill
+  "platform_paise":30, "rental_paid_paise":90, "earnings_paise":0,
+  "rental_due_after_paise":12410,       // rental still unpaid this month after this bill
+  "sponsors":[{"advertiser_id","name","kind":"audio"|"tag","amount_paise","status":"committed"|"released","release_reason"}]}
 ```
-Settlement also carries the SoundShare money flow: `covered_by_ads_paise` (this sale's own ad money), `shared_drawn_paise` (taken from the shared pool), `rental_paid_paise` / `rental_from_pool_paise` (Soundbox rental paid this month), `shared_contributed_paise` (surplus given to the pool), `shared_pool_balance_paise`, and `platform_paise` (Paytm's cut of the surplus). Merchant `stats` has `rental{monthly_fee_paise, paid_this_month_paise, due_paise, plays_to_cover}` and `shared{contributed_paise, received_for_fees_paise, received_for_rental_paise, network_pool_balance_paise, daily_cap_paise}`.
-Leg and Settlement are otherwise unchanged from v1 (`legs[].status/qr_data/rail/mdr_paise`, `settlement.mdr_paise, mdr_unsplit_paise, saved_by_factorization_paise, ad_liquidity_paise, covered_paise, coverage_pct, merchant_receives_paise, acquirer_paise, platform_paise, sponsors[], status`).
+Self-payments (payer VPA = merchant's VPA) earn no ad money. A play is charged only if the bill is paid **and** the play is verified.
 
 ### Devices (Soundboxes)
 | Method | Path | Who | Body | Returns |
@@ -125,14 +126,14 @@ Leg and Settlement are otherwise unchanged from v1 (`legs[].status/qr_data/rail/
 |---|---|---|---|---|
 | GET | `/api/advertisers` | admin | – | `Advertiser[]` |
 | GET | `/api/advertisers/{id}` | owner/admin | – | `Advertiser` with `wallet` and `stats` |
-| PATCH | `/api/advertisers/{id}` | owner | `{name?, category?, lat?, lng?, address?}` | `Advertiser` |
+| PATCH | `/api/advertisers/{id}` | owner | `{name?, category?, gstin?, lat?, lng?, address?}` | `Advertiser`. A changed GSTIN goes back to verification. |
 | POST | `/api/advertisers/{id}/topup` | owner | `{amount_paise}` | `TopUp`. With a real provider, show `qr_data`/`checkout_url` and poll. |
 | GET | `/api/topups/{id}` | owner/admin | – | `TopUp` |
 | GET | `/api/advertisers/{id}/topups` | owner/admin | – | `TopUp[]` |
 | POST | `/api/ai/transcribe` | advertiser/merchant | multipart `audio` (webm/ogg/wav/mp3, ≤ 2 MB), `lang` | `{text, source:"ai"}`. `502` if AI fails, and then the client falls back to browser speech recognition. |
 | GET | `/api/geo/soundboxes?lat=&lng=&radius_m=` | advertiser/admin | – | `{count, online, soundboxes:[{device_id, merchant_name, category, lat, lng, distance_m, online}]}` |
 | GET | `/api/campaigns` | advertiser (own) / admin (all) | – | `Campaign[]` |
-| POST | `/api/campaigns` | advertiser | `CampaignCreate` | `201 Campaign` (`status:"generating"`). AI writes the copy and voices it. |
+| POST | `/api/campaigns` | advertiser | `CampaignCreate` | `201 Campaign` (`status:"generating"`). AI writes the copy in `lang` (the brief may be English or any language) and voices it. Goes live only once KYC is verified and ₹200 is deposited. |
 | GET | `/api/campaigns/{id}` | owner/admin | – | `Campaign` |
 | PATCH | `/api/campaigns/{id}` | owner | `{status?:"active"\|"paused", bid_paise?, daily_cap_paise?, radius_m?, lat?, lng?, name?}` | `Campaign`. Setting `active` on a draft deploys it. |
 | POST | `/api/campaigns/{id}/regenerate` | owner | `{prompt?, lang?}` | `Campaign` |
@@ -144,10 +145,16 @@ Advertiser = {"id":"A-..","name":"FitZone Gym","type":"local","category":"fitnes
             "burn_per_play_paise":120|null,   // average committed audio charge
             "est_plays_remaining":249|null,   // balance ÷ weighted active bid
             "lifetime_topup_paise":30000,"lifetime_spend_paise":120},
-  "stats":{"plays":1,"spend_paise":120,"claims":0,"released_plays":0}}
-CampaignCreate = {"kind":"audio"|"subvention","name":"3-day promo","prompt":"..","lang":"en"|"hi",
-  "lat":..?,"lng":..?,"radius_m":500,"target_categories":[],"sku_keywords":[],
-  "bid_paise":120,"daily_cap_paise":5000,"deploy":true}       // deploy:false = Save Draft
+  "gstin":"..","kyc":{"status":"pending"|"verified"|"rejected","note","method","verified_at",
+                      "deposit_paise","min_deposit_paise":20000,"blockers":[".."],"can_go_live":false},
+  "stats":{"plays":1,"spend_paise":120,"claims":0,"tag_plays":0,"released_plays":0}}
+CampaignCreate = {"kind":"audio","name":"3-day promo",
+  "prompt":"20% off all mixer grinders this week",   // brief, typically English
+  "lang":"hi",                                       // ad language: en hi bn ta te kn ml mr gu pa or
+  "lat":..?,"lng":..?,"radius_m":500,"target_categories":[],
+  "bid_paise":120,                                   // full ad, per verified play
+  "tag_bid_paise":90?,                               // busy-hour sponsor line; must be < bid; default 75%
+  "daily_cap_paise":5000,"deploy":true}              // deploy:false = Save Draft
 Campaign = {...CampaignCreate, "id":"CMP-..","advertiser_id","advertiser_name",
   "status":"generating"|"draft"|"active"|"paused"|"failed"|"exhausted", "error":null|"..",
   "creative": null | {"id","lang","script","banner":{title,subtitle,cta,bg,fg,accent},
@@ -155,7 +162,7 @@ Campaign = {...CampaignCreate, "id":"CMP-..","advertiser_id","advertiser_name",
      "source":"ai"|"fallback","fallback_reason":null|"..",           // copywriting path
      "voice_source":"ai"|"fallback"|null,"voice_fallback_reason":null|"..",
      "model":"gemini-3.8-flash","voice":"Kore"},
-  "stats":{"plays":0,"spend_paise":0,"spent_today_paise":0,"claims":0}}
+  "stats":{"plays":0,"tag_plays":0,"spend_paise":0,"spent_today_paise":0,"claims":0}}
 ```
 
 ### Ledger, sentinel, admin (admin only)
@@ -166,17 +173,18 @@ Campaign = {...CampaignCreate, "id":"CMP-..","advertiser_id","advertiser_name",
 | GET | `/api/ledger/flows?order_id=` | `{nodes:[{id,label}],links:[{source,target,amount_paise}]}` |
 | GET | `/api/sentinel/flags?limit=` | `[{id,ref,rule,severity,action,detail,ts}]` |
 | GET | `/api/admin/stats` | see below |
+| GET | `/api/admin/kyc?status=pending\|verified\|rejected\|all` | `Advertiser[]` awaiting or past verification |
+| POST | `/api/admin/advertisers/{id}/kyc` | `{action:"approve"\|"reject", note?}` → `Advertiser` |
 
 ```jsonc
-AdminStats = {"orders":n,"settled_orders":n,"gross_paise":..,"avg_ticket_paise":..,"mdr_paise":..,
-  "interchange_pct":1.536,            // mdr / gross
-  "covered_paise":..,"coverage_pct":100.0,"platform_paise":..,
-  "spread_pct":6.0,                   // platform / ad liquidity
-  "saved_by_factorization_paise":..,"ad_liquidity_paise":..,
-  "plays":n,"plays_released":n,"play_verification_pct":100.0,
+AdminStats = {"orders":n,"settled_orders":n,"gross_paise":..,"avg_ticket_paise":..,
+  "ad_revenue_paise":..,"merchant_earnings_paise":..,"rental_paid_by_ads_paise":..,"platform_paise":..,
+  "plays":n,"tag_plays":n,"plays_released":n,"play_verification_pct":100.0,
   "devices_total":n,"devices_online":n,"merchants":n,"advertisers":n,
   "ledger_invariant_paise":0,
   "latency":{"p50_ms","p95_ms","last_ms","samples"}}
+Ledger accounts: customer, merchant:<id>, merchant_earnings:<id>, soundbox_rental, adv:<id>,
+  sponsor_pool (per-bill clearing), platform, funding.
 ```
 
 ### WebSocket `/ws/admin?token=<admin session token>`
@@ -186,7 +194,7 @@ Events: `{type:"order_update"|"ledger_post"|"device_status"|"play_ack"|"sentinel
 
 ## 2. Device WebSocket protocol (ESP32 + browser simulator)
 
-**Unchanged from v1** except that device ids and tokens now come from `POST /api/devices` (e.g. `SB-7F3A`). No device is built in. Connect to `ws://<host>:8000/ws/device/{deviceId}?token=<token>`.
+Device ids and tokens come from `POST /api/devices` (e.g. `SB-7F3A`). One live connection per device: a new connection gets the device and the old one receives `replaced`. Connect to `ws://<host>:8000/ws/device/{deviceId}?token=<token>`.
 
 Every frame is one JSON text message with a `type` field. The server sends `ping` every 20 s, and the device answers `pong`.
 Times are epoch **seconds**. Media URLs are **http**. Banner text is ASCII.
@@ -196,17 +204,13 @@ Times are epoch **seconds**. Media URLs are **http**. Banner text is ASCII.
 {"type":"hello_ack","deviceId":"SB-7F3A","merchant":{"id":"M-..","name":"Sharma Electronics","lang":"en"},"serverTime":1731400000}
 {"type":"idle","banners":[Banner,...]}
 {"type":"show_bill","orderId":"O-1","items":[{"name":"Havells Mixer Grinder","qty":1,"amount":470000}],"total":650000}
-{"type":"show_split","orderId":"O-1","total":650000,
- "legs":[{"seq":1,"label":"Services (SAC 9987)","amount":180000},{"seq":2,"label":"Goods (HSN 8509)","amount":470000}],
- "note":"Separate GST invoices. Fee is calculated after payment."}
-{"type":"show_qr","orderId":"O-1","legId":"L-1","seq":1,"of":2,"qrData":"upi://pay?...","amount":180000,"expiresAt":1731400600}
-{"type":"leg_paid","orderId":"O-1","legId":"L-1","seq":1,"of":2,"amount":180000,"rail":"UPI_RUPAY_CC"}
+{"type":"show_qr","orderId":"O-1","legId":"L-1","seq":1,"of":1,"qrData":"upi://pay?...","amount":650000,"expiresAt":1731400600}
 {"type":"payment_success","orderId":"O-1","amount":650000,"lang":"en",
  "announce":["n6","thousand","n5","hundred","rupees","received"],"announceText":"Six thousand five hundred rupees received",
- "playId":"P-1"|null,"ad":null|{"hash":"<sha1>","url":"http://host:8000/media/audio/<sha1>.mp3","durationMs":2300,"advertiser":"FitZone Gym"},
+ "announceUrl":null|"http://host:8000/api/announce/O-1.mp3",   // play this instead of clips when present
+ "playId":"P-2"|null,"ad":null|{"kind":"tag","hash":"<sha1>","url":"...","durationMs":1100},  // busy-hour sponsor line only
  "banner":null|Banner,"offerQr":null|"http://host:8000/api/offers/CR-1/claim?d=SB-7F3A",
- "settlement":{"mdr":9983,"merchantReceives":650000,"coveragePct":100.0,
-               "coveredBy":[{"name":"Havells","amount":10500},{"name":"FitZone Gym","amount":120}]}}
+ "settlement":null}
 {"type":"play_ad","orderId":"O-1","playId":"P-1","ad":{"hash":"<sha1>","url":"http://host:8000/media/audio/<sha1>.mp3","durationMs":3500,"advertiser":"FitZone Gym"},"banner":Banner,"offerQr":"http://host:8000/api/offers/CR-1/claim?d=SB-7F3A"}
    // Normal hours: sent right after show_qr. Play it now, while the customer pays. A payment_success that
    // arrives meanwhile is played AFTER the ad ends. Charged only if fully played AND the bill gets paid.

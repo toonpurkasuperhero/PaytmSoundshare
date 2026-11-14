@@ -73,7 +73,7 @@ def price(c: Campaign, fmt: str = "ad") -> int:
 def _base_eligible(db: Session, c: Campaign, m: Merchant, cost: int | None = None) -> bool:
     cost = c.bid_paise if cost is None else cost
     adv = c.advertiser
-    if c.status != "active":
+    if c.status != "active" or adv.kyc_status != "verified":  # unverified advertisers never serve
         return False
     if adv.category in (m.blocked_categories or []):
         return False

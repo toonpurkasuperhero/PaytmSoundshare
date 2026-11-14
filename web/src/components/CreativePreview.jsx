@@ -40,7 +40,7 @@ export function Banner({ creative, advertiserName }) {
 }
 
 /** Banner + script + audio for one campaign creative, with where each part came from. */
-export default function CreativePreview({ creative, advertiserName }) {
+export default function CreativePreview({ creative, advertiserName, brief }) {
   const { ttsModel } = useConfig();
   if (!creative) return null;
   const secs = creative.duration_ms ? (creative.duration_ms / 1000).toFixed(1) : null;
@@ -56,6 +56,11 @@ export default function CreativePreview({ creative, advertiserName }) {
           </span>
           {secs && <span className="font-mono font-semibold text-paytm-navy">Duration: {secs}s</span>}
         </div>
+        {brief && brief.trim() !== (creative.script || '').trim() && (
+          <p className="text-label-sm text-slate-500">
+            <span className="font-semibold text-slate-600">Your brief:</span> {brief}
+          </p>
+        )}
         {creative.script && <p className="rounded-lg border border-l-[3px] border-slate-200/60 border-l-paytm-cyan bg-white p-3 text-body-sm italic text-slate-800 shadow-sm">“{creative.script}”</p>}
         {creative.audio_url ? (
           <audio controls preload="none" src={absUrl(creative.audio_url)} className="h-10 w-full">

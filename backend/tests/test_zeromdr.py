@@ -79,7 +79,7 @@ class FakeGemini:
             if self.mode == "payment_words" and "previous script" not in prompt:
                 return {"script": "FitZone Gym received payment! One month free.", "title": "FitZone Gym",
                         "subtitle": "1 month free", "cta": "Scan to claim", "compliant": True, "compliance_note": "ok"}
-            brief = re.search(r'brief: "(.*)"', prompt).group(1).lower()
+            brief = re.search(r'brief[^"]*"(.*)"', prompt).group(1).lower()
             bad = "cure" in brief
             return {"script": f"FitZone Gym: {brief[:40]}!", "title": "FitZone Gym",
                     "subtitle": "1 month free on annual plan", "cta": "Scan to claim",
@@ -127,17 +127,35 @@ def auth_h(token):
 def reg_merchant(c, phone="9876543210", name="Sharma Electronics", vpa="sharma.electronics@okicici"):
     r = c.post("/api/auth/register/merchant", json={
         "phone": phone, "password": "s3cret-pass", "name": name, "category": "electronics",
-        "gstin": "29ABCDE1234F1Z5", "vpa": vpa, "lat": 12.9716, "lng": 77.5946})
+        "gstin": "29ABCDE1234F1ZW", "vpa": vpa, "lat": 12.9716, "lng": 77.5946})
     assert r.status_code == 201, r.text
     return r.json()
 
 
-def reg_adv(c, phone, name, type_, category, lat=None, lng=None):
+def adv_gstin(phone):
+    from app import gstin
+    return gstin.make("29", f"AAAPA{phone[-4:]}A")
+
+
+def admin_h(c):
+    a = c.post("/api/auth/login", json={"phone": "9000000001", "password": "admin-pass-123"}).json()
+    return auth_h(a["token"])
+
+
+def reg_adv(c, phone, name, type_, category, lat=None, lng=None, verify=True, deposit=True):
+    """Sign up an advertiser the way a real one goes live: GSTIN -> admin verification -> Rs 200 deposit."""
     r = c.post("/api/auth/register/advertiser", json={
         "phone": phone, "password": "s3cret-pass", "name": name, "type": type_, "category": category,
-        "lat": lat, "lng": lng})
+        "lat": lat, "lng": lng, "gstin": adv_gstin(phone)})
     assert r.status_code == 201, r.text
-    return r.json()
+    out = r.json()
+    aid = out["user"]["advertiser_id"]
+    if verify:
+        assert c.post(f"/api/admin/advertisers/{aid}/kyc", headers=admin_h(c),
+                      json={"action": "approve"}).status_code == 200
+    if deposit:
+        c.post(f"/api/advertisers/{aid}/topup", json={"amount_paise": 20000}, headers=auth_h(out["token"]))
+    return out
 
 
 def wait_campaign(c, h, cid, timeout=10):
@@ -172,7 +190,7 @@ def setup_ecosystem(c):
     m = reg_merchant(c)
     mh = auth_h(m["token"])
     dev = c.post("/api/devices", json={"name": "Counter 1"}, headers=mh).json()
-    fit = reg_adv(c, "9811111111", "FitZone Gym", "local", "fitness", 12.9733, 77.5958)
+    fit = reg_adv(c, "9811111111", "FitZone Gym", "local", "fitness", 12.9733, 77.5958, deposit=False)
     fh = auth_h(fit["token"])
     assert c.post(f"/api/advertisers/{fit['user']['advertiser_id']}/topup", json={"amount_paise": 30000},
                   headers=fh).json()["status"] == "paid"
@@ -180,14 +198,9 @@ def setup_ecosystem(c):
         "kind": "audio", "name": "3-day promo", "prompt": "Run a 3-day promotion: 1 month free on annual membership",
         "lang": "en", "radius_m": 500, "bid_paise": 120, "daily_cap_paise": 5000, "deploy": True}).json()
     camp = wait_campaign(c, fh, camp["id"])
-    hav = reg_adv(c, "9822222222", "Havells", "brand", "appliance")
+    hav = reg_adv(c, "9822222222", "Havells", "brand", "appliance", deposit=False)
     hh = auth_h(hav["token"])
     c.post(f"/api/advertisers/{hav['user']['advertiser_id']}/topup", json={"amount_paise": 1000000}, headers=hh)
-    sub = c.post("/api/campaigns", headers=hh, json={
-        "kind": "subvention", "name": "Clearing rights", "prompt": "Havells pays your payment fee",
-        "radius_m": 0, "target_categories": ["appliance"], "sku_keywords": ["havells"],
-        "bid_paise": 10500, "deploy": True}).json()
-    wait_campaign(c, hh, sub["id"])
     return {"m": m, "mh": mh, "dev": dev, "fit": fit, "fh": fh, "camp": camp, "hav": hav, "hh": hh}
 
 
@@ -196,12 +209,6 @@ ITEMS = [{"name": "Havells Mixer Grinder 750W", "qty": 1, "unit_price": 470000},
 
 
 # ---------------------------------------------------------------- unit
-
-def test_mdr_quotes():
-    assert mdr.mdr_total(470000, "UPI_RUPAY_CC") == 9983
-    assert mdr.mdr_total(650000, "UPI_RUPAY_CC") == 13806
-    assert mdr.mdr_total(180000, "UPI_RUPAY_CC") == 0
-    assert mdr.mdr_total(1000000, "UPI_BANK") == 4720
 
 
 def test_announce_and_format():
@@ -235,7 +242,7 @@ def test_no_seed_data_and_auth(client):
     assert client.get("/api/advertisers", headers=ah).json() == []
     m = reg_merchant(client)
     assert client.post("/api/auth/register/merchant", json={
-        "phone": "9876543210", "password": "x" * 8, "name": "Dup", "category": "grocery", "gstin": "29ABCDE1234F1Z5",
+        "phone": "9876543210", "password": "x" * 8, "name": "Dup", "category": "grocery", "gstin": "29ABCDE1234F1ZW",
         "vpa": "dup@okaxis", "lat": 1, "lng": 1}).status_code == 409
     assert client.post("/api/auth/login", json={"phone": "9876543210", "password": "wrong-pass"}).status_code == 401
     assert client.get("/api/auth/me", headers=auth_h(m["token"])).json()["role"] == "merchant"
@@ -251,123 +258,9 @@ def test_no_seed_data_and_auth(client):
 
 # ---------------------------------------------------------------- AI paths
 
-def test_catalog_item_is_ai_classified(client, fake):
-    m = reg_merchant(client)
-    r = client.post(f"/api/merchants/{m['user']['merchant_id']}/catalog", headers=auth_h(m["token"]),
-                    json={"name": "Havells Mixer Grinder 750W", "unit_price": 470000})
-    assert r.status_code == 201
-    item = r.json()
-    assert (item["hsn_sac"], item["category"], item["brand"], item["source"]) == ("8509", "appliance", "havells", "ai")
-    assert "classify" in fake.calls
 
 
-def test_catalog_lines_use_server_side_codes(client, fake):
-    m = reg_merchant(client)
-    h = auth_h(m["token"])
-    item = client.post(f"/api/merchants/{m['user']['merchant_id']}/catalog", headers=h,
-                       json={"name": "Havells Mixer Grinder 750W", "unit_price": 470000}).json()
-    fake.calls.clear()
-    plan = client.post("/api/bills/plan", headers=h, json={"items": [
-        {"name": item["name"], "qty": 1, "unit_price": 470000, "catalog_item_id": item["id"],
-         "hsn_sac": "9999", "category": "tampered"}]}).json()
-    assert plan["items"][0]["classification_source"] == "catalog"
-    assert (plan["items"][0]["hsn_sac"], plan["items"][0]["category"]) == ("8509", "appliance")
-    assert "classify" not in fake.calls                       # no AI call needed for catalog lines
-    other = reg_merchant(client, phone="9876500000", name="Other Shop", vpa="other@okaxis")
-    r = client.post("/api/bills/plan", headers=auth_h(other["token"]), json={"items": [
-        {"name": "x", "qty": 1, "unit_price": 100, "catalog_item_id": item["id"]}]})
-    assert r.status_code == 404                               # can't use another merchant's catalog
 
-
-def test_ai_plan_then_golden_walkthrough(client, fake):
-    e = setup_ecosystem(client)
-    assert e["camp"]["status"] == "active", e["camp"]["error"]
-    cr = e["camp"]["creative"]
-    assert (cr["source"], cr["voice_source"], cr["model"]) == ("ai", "ai", "gemini-3.8-flash")
-    assert 2200 <= cr["duration_ms"] <= 2600                     # trimmed tone ≈ 2.3 s + padding
-
-    plan = client.post("/api/bills/plan", headers=e["mh"], json={"items": ITEMS}).json()
-    assert plan["source"] == "ai" and plan["classification"]["source"] == "ai"
-    assert [l["amount_paise"] for l in plan["legs"]] == [180000, 470000]
-    est = {r["rail"]: r for r in plan["estimate"]["by_rail"]}
-    assert (est["UPI_RUPAY_CC"]["mdr_single_paise"], est["UPI_RUPAY_CC"]["mdr_split_paise"]) == (13806, 9983)
-    assert (est["UPI_BANK"]["mdr_single_paise"], est["UPI_BANK"]["mdr_split_paise"]) == (3068, 2218)
-    assert est["CREDIT_CARD"]["saving_paise"] == 0             # card rate has no Rs 2,000 zero slab
-    assert plan["estimate"]["worst_case_rail"] in ("UPI_RUPAY_CC", "CREDIT_CARD")
-    assert plan["sentinel"]["decision"] == "allow"
-
-    dev = e["dev"]
-    with client.websocket_connect(f"/ws/device/{dev['id']}?token={dev['token']}") as ws:
-        ws.send_text(json.dumps({"type": "hello", "fw": "test", "cache": []}))
-        assert recv_until(ws, "hello_ack")["merchant"]["name"] == "Sharma Electronics"
-        r = client.post("/api/orders", headers=e["mh"], json={
-            "device_id": dev["id"], "items": plan["items"], "legs": plan["legs"],
-            "plan_source": plan["source"], "rationale": plan["rationale"]})
-        assert r.status_code == 201, r.text
-        order = r.json()
-        assert order["division"]["source"] == "ai"
-        assert order["legs"][0]["reason"] == "Separate services supply"
-        recv_until(ws, "show_split")
-        assert recv_until(ws, "show_qr")["seq"] == 1
-        ad = recv_until(ws, "play_ad")                     # ad starts as the QR goes up
-        assert ad["ad"]["advertiser"] == "FitZone Gym"
-        ws.send_text(json.dumps({"type": "play_ack", "playId": ad["playId"], "ms": 2350, "peakDb": -18.5}))
-        time.sleep(0.2)                                    # ad finished while the customer was paying
-        assert client.get(f"/api/orders/{order['id']}", headers=e["mh"]).json()["status"] == "awaiting_payment"
-        for leg in order["legs"]:
-            assert client.post("/api/mock/pay", headers=e["mh"],
-                               json={"leg_id": leg["id"], "rail": "UPI_RUPAY_CC"}).status_code == 200
-        ok = recv_until(ws, "payment_success")
-        assert ok["ad"] is None                            # already heard; only the payment message now
-        o = wait_order(client, e["mh"], order["id"])
-
-    s = o["settlement"]
-    assert (s["mdr_unsplit_paise"], s["mdr_paise"], s["saved_by_factorization_paise"]) == (13806, 9983, 3823)
-    assert (s["ad_liquidity_paise"], s["merchant_receives_paise"], s["acquirer_paise"]) == (10620, 650000, 9983)
-    # surplus Rs 6.37: 25% platform cut, the rest pays Sharma's Soundbox rental (Rs 125 not yet covered)
-    assert (s["platform_paise"], s["rental_paid_paise"], s["shared_contributed_paise"]) == (159, 478, 0)
-
-    admin = client.post("/api/auth/login", json={"phone": "9000000001", "password": "admin-pass-123"}).json()
-    ah = auth_h(admin["token"])
-    stats = client.get("/api/admin/stats", headers=ah).json()
-    assert stats["ledger_invariant_paise"] == 0 and stats["coverage_pct"] == 100.0
-    fit = client.get(f"/api/advertisers/{e['fit']['user']['advertiser_id']}", headers=e["fh"]).json()
-    assert fit["balance_paise"] == 29880 and fit["wallet"]["burn_per_play_paise"] == 120
-    assert fit["wallet"]["est_plays_remaining"] == 249
-    geo = client.get("/api/geo/soundboxes", headers=e["fh"], params={"lat": 12.9733, "lng": 77.5958, "radius_m": 500}).json()
-    assert geo["count"] == 1 and geo["soundboxes"][0]["merchant_name"] == "Sharma Electronics"
-
-
-def test_ai_split_rejected_by_sentinel_falls_back(client, fake):
-    m = reg_merchant(client)
-    fake.mode = "illegal_split"
-    items = [{"name": "Havells Mixer Grinder", "qty": 1, "unit_price": 190000},
-             {"name": "Havells Electric Kettle", "qty": 1, "unit_price": 160000}]
-    plan = client.post("/api/bills/plan", headers=auth_h(m["token"]), json={"items": items}).json()
-    # Both are goods from one supplier: no legal split exists, so the AI isn't even asked to divide.
-    assert plan["source"] == "single" and len(plan["legs"]) == 1
-    items.append({"name": "Installation service", "qty": 1, "unit_price": 50000})
-    plan = client.post("/api/bills/plan", headers=auth_h(m["token"]), json={"items": items}).json()
-    assert plan["source"] == "fallback" and "Sentinel" in plan["fallback_reason"]
-    assert len(plan["legs"]) == 2 and plan["sentinel"]["decision"] == "allow"
-
-
-def test_ai_outage_uses_fallbacks_and_says_so(client, fake):
-    m = reg_merchant(client)
-    fake.mode = "down"
-    plan = client.post("/api/bills/plan", headers=auth_h(m["token"]), json={"items": ITEMS}).json()
-    assert plan["source"] == "fallback" and "503" in plan["fallback_reason"]
-    assert plan["classification"]["source"] == "fallback"
-    assert [l["amount_paise"] for l in plan["legs"]] == [180000, 470000]   # rule engine still splits legally
-    parsed = client.post("/api/bills/parse", headers=auth_h(m["token"]), json={"text": "Mixer Grinder 4700\nWarranty 1,800"}).json()
-    assert parsed["source"] == "fallback" and len(parsed["items"]) == 2
-    a = reg_adv(client, "9833333333", "Dr. Smile Dental", "local", "healthcare", 12.97, 77.59)
-    camp = client.post("/api/campaigns", headers=auth_h(a["token"]), json={
-        "kind": "audio", "name": "Check-up", "prompt": "Free dental check-up this week", "bid_paise": 90}).json()
-    camp = wait_campaign(client, auth_h(a["token"]), camp["id"])
-    # Copy fell back to a template; voice had no fallback configured (TTS_FALLBACK=none) -> honest failure.
-    assert camp["creative"]["source"] == "fallback" and "503" in camp["creative"]["fallback_reason"]
-    assert camp["status"] == "failed" and "voice-over" in camp["error"]
 
 
 def test_ai_compliance_rejects_ad(client, fake):
@@ -390,37 +283,7 @@ def test_draft_then_deploy(client, fake):
 
 # ---------------------------------------------------------------- compliance & fraud
 
-def test_manual_structuring_is_blocked(client, fake):
-    m = reg_merchant(client)
-    items = [{"name": "Havells Mixer Grinder", "qty": 1, "unit_price": 190000, "hsn_sac": "8509", "category": "appliance"},
-             {"name": "Havells Electric Kettle", "qty": 1, "unit_price": 160000, "hsn_sac": "8516", "category": "appliance"}]
-    r = client.post("/api/orders", headers=auth_h(m["token"]),
-                    json={"items": items, "legs": [[0], [1]], "plan_source": "manual"})
-    assert r.status_code == 422 and r.json()["error"] == "sentinel_blocked"
-    assert any(x["rule"] == "SAME_SUPPLY_SPLIT" for x in r.json()["reasons"])
 
-
-def test_self_dealing_gets_no_subsidy(client, fake):
-    e = setup_ecosystem(client)
-    plan = client.post("/api/bills/plan", headers=e["mh"], json={"items": ITEMS[:1]}).json()
-    order = client.post("/api/orders", headers=e["mh"], json={
-        "items": plan["items"], "legs": plan["legs"], "plan_source": plan["source"]}).json()
-    client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": order["legs"][0]["id"], "rail": "UPI_RUPAY_CC",
-                                                         "payer": "sharma.electronics@okicici"})
-    o = wait_order(client, e["mh"], order["id"])
-    assert o["settlement"]["covered_paise"] == 0 and o["sentinel"]["deny_subsidy"] is True
-
-
-def test_mock_pay_requires_owner_or_device(client, fake):
-    e = setup_ecosystem(client)
-    plan = client.post("/api/bills/plan", headers=e["mh"], json={"items": ITEMS[1:]}).json()
-    order = client.post("/api/orders", headers=e["mh"], json={"items": plan["items"], "legs": plan["legs"]}).json()
-    leg = order["legs"][0]["id"]
-    assert client.post("/api/mock/pay", json={"leg_id": leg, "rail": "UPI_BANK"}).status_code == 403
-    assert client.post("/api/mock/pay", headers=e["fh"], json={"leg_id": leg, "rail": "UPI_BANK"}).status_code == 403
-    assert client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": leg}).status_code == 422  # method required
-    assert client.post("/api/mock/pay", json={"leg_id": leg, "rail": "UPI_BANK",
-                                              "device_token": e["dev"]["token"]}).status_code == 200
 
 
 # ---------------------------------------------------------------- Gemini client: quota & failover (no network)
@@ -475,10 +338,9 @@ def test_demo_seed_and_clean_removal(client, fake):
     m = client.post("/api/auth/login", json={"phone": "9000000101", "password": demo.DEMO_PASSWORD}).json()
     mh = auth_h(m["token"])
     cat = client.get(f"/api/merchants/{m['user']['merchant_id']}/catalog", headers=mh).json()
-    assert len(cat) == 26 and {c["source"] for c in cat} == {"ai"}
+    assert len(cat) == 26
     # a real sale at the demo shop, sponsored by demo advertisers
-    plan = client.post("/api/bills/plan", headers=mh, json={"items": ITEMS}).json()
-    order = client.post("/api/orders", headers=mh, json={"items": plan["items"], "legs": plan["legs"]}).json()
+    order = client.post("/api/orders", headers=mh, json={"items": ITEMS}).json()
     for leg in order["legs"]:
         client.post("/api/mock/pay", headers=mh, json={"leg_id": leg["id"], "rail": "UPI_RUPAY_CC"})
     admin = client.post("/api/auth/login", json={"phone": "9000000001", "password": "admin-pass-123"}).json()
@@ -524,7 +386,7 @@ def fake_sarvam(monkeypatch):
 def test_tamil_merchant_hears_full_sentence_announcement(client, fake, fake_sarvam):
     r = client.post("/api/auth/register/merchant", json={
         "phone": "9845000001", "password": "s3cret-pass", "name": "Murugan Stores", "category": "grocery",
-        "gstin": "33ABCDE1234F1Z5", "vpa": "murugan@okaxis", "lat": 13.08, "lng": 80.27, "lang": "ta"})
+        "gstin": "33ABCDE1234F1Z7", "vpa": "murugan@okaxis", "lat": 13.08, "lng": 80.27, "lang": "ta"})
     assert r.status_code == 201, r.text
     mh = auth_h(r.json()["token"])
     dev = client.post("/api/devices", json={"name": "Counter"}, headers=mh).json()
@@ -570,20 +432,9 @@ def test_languages_exposed_and_validated(client):
     assert [l["code"] for l in cfg["languages"]][:3] == ["en", "hi", "bn"] and len(cfg["languages"]) == 11
     bad = client.post("/api/auth/register/merchant", json={
         "phone": "9845000003", "password": "s3cret-pass", "name": "X Shop", "category": "grocery",
-        "gstin": "33ABCDE1234F1Z5", "vpa": "x@okaxis", "lat": 13.0, "lng": 80.2, "lang": "fr"})
+        "gstin": "33ABCDE1234F1Z7", "vpa": "x@okaxis", "lat": 13.0, "lng": 80.2, "lang": "fr"})
     assert bad.status_code == 422
 
-
-def test_fee_follows_the_payment_method_actually_used(client, fake):
-    e = setup_ecosystem(client)
-    fees = {}
-    for rail in ("UPI_BANK", "DEBIT_CARD", "NET_BANKING", "CREDIT_CARD"):
-        order = client.post("/api/orders", headers=e["mh"], json={"items": ITEMS[:1], "legs": [[0]]}).json()
-        o = client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": order["legs"][0]["id"], "rail": rail}).json()
-        assert o["status"] in ("paid", "settled")                 # fee is final once the payment is recorded
-        fees[rail] = (o["legs"][0]["rail"], o["settlement"]["mdr_paise"])
-    assert fees == {"UPI_BANK": ("UPI_BANK", 2218), "DEBIT_CARD": ("DEBIT_CARD", 4991),
-                    "NET_BANKING": ("NET_BANKING", 6655), "CREDIT_CARD": ("CREDIT_CARD", 9983)}
 
 
 def test_one_soundbox_one_connection(client, fake):
@@ -600,42 +451,6 @@ def test_one_soundbox_one_connection(client, fake):
             client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": order["legs"][0]["id"], "rail": "UPI_BANK"})
             assert recv_until(second, "payment_success")["orderId"] == order["id"]   # only the new one plays
 
-
-def test_soundshare_small_vendor_pays_rental_then_funds_other_shops(client, fake):
-    e = setup_ecosystem(client)                              # Sharma Electronics + FitZone ad nearby
-    assert client.patch(f"/api/campaigns/{e['camp']['id']}", headers=e["fh"], json={"bid_paise": 20000, "daily_cap_paise": 100000}).status_code == 200
-    bulb = [{"name": "Philips LED Bulb 9W", "qty": 1, "unit_price": 12000, "hsn_sac": "8539", "category": "lighting"}]
-    dev = e["dev"]
-    with client.websocket_connect(f"/ws/device/{dev['id']}?token={dev['token']}") as ws:
-        ws.send_text(json.dumps({"type": "hello", "cache": []}))
-        recv_until(ws, "hello_ack")
-        o = client.post("/api/orders", headers=e["mh"], json={"items": bulb, "legs": [[0]]}).json()
-        ad = recv_until(ws, "play_ad")
-        client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": o["legs"][0]["id"], "rail": "UPI_BANK"})
-        recv_until(ws, "payment_success")                  # payment landed mid-ad: settles on the ack
-        ws.send_text(json.dumps({"type": "play_ack", "playId": ad["playId"], "ms": 2400, "peakDb": -20}))
-        s = wait_order(client, e["mh"], o["id"])["settlement"]
-    # Rs 120 sale: no fee. Rs 200 ad -> Rs 50 platform -> Rs 125 own rental -> Rs 25 to the shared pool
-    assert (s["mdr_paise"], s["platform_paise"], s["rental_paid_paise"], s["shared_contributed_paise"]) == (0, 5000, 12500, 2500)
-    st = client.get(f"/api/merchants/{e['m']['user']['merchant_id']}", headers=e["mh"]).json()["stats"]
-    assert st["rental"]["due_paise"] == 0 and st["shared"]["contributed_paise"] == 2500
-
-    # A gym-equipment shop nearby: FitZone (a gym) is a competitor, so no ad plays there.
-    r = client.post("/api/auth/register/merchant", json={
-        "phone": "9876511111", "password": "s3cret-pass", "name": "FitGear Store", "category": "fitness",
-        "gstin": "29ABCDE9999F1Z5", "vpa": "fitgear@okaxis", "lat": 12.9718, "lng": 77.5948})
-    gh = auth_h(r.json()["token"])
-    o = client.post("/api/orders", headers=gh, json={"items": [
-        {"name": "Dumbbell set 10kg", "qty": 1, "unit_price": 250000, "hsn_sac": "9506", "category": "fitness"}],
-        "legs": [[0]]}).json()
-    s = client.post("/api/mock/pay", headers=gh, json={"leg_id": o["legs"][0]["id"], "rail": "UPI_BANK"}).json()["settlement"]
-    # Rs 2,500 by bank UPI: fee Rs 11.80, covered entirely by the vendor's shared surplus
-    assert (s["mdr_paise"], s["covered_by_ads_paise"], s["shared_drawn_paise"]) == (1180, 0, 1180)
-    assert s["coverage_pct"] == 100.0 and s["merchant_receives_paise"] == 250000
-    assert s["shared_pool_balance_paise"] == 2500 - 1180
-    admin = client.post("/api/auth/login", json={"phone": "9000000001", "password": "admin-pass-123"}).json()
-    stats = client.get("/api/admin/stats", headers=auth_h(admin["token"])).json()
-    assert stats["ledger_invariant_paise"] == 0 and stats["shared_pool_paise"] == 1320
 
 
 def _merchant_ws(client, e):
@@ -685,3 +500,137 @@ def test_ad_heard_by_a_customer_who_walks_away_is_not_charged(client, fake):
         ws_cm.__exit__(None, None, None)
     fit = client.get(f"/api/advertisers/{e['fit']['user']['advertiser_id']}", headers=e["fh"]).json()
     assert fit["balance_paise"] == 30000 and fit["stats"]["plays"] == 0
+
+
+# ---------------------------------------------------------------- advertiser KYC (GST) gate
+
+def test_gstin_check_digit_rejects_fakes(client):
+    from app import gstin
+    assert gstin.problem("27AAPFU0939F1ZV") is None            # the standard GSTN example GSTIN
+    assert "check digit" in gstin.problem("29ABCDE1234F1Z5")
+    assert "state code" in gstin.problem("00ABCDE1234F1ZW")
+    r = client.post("/api/auth/register/advertiser", json={
+        "phone": "9871100001", "password": "s3cret-pass", "name": "Fake Ads", "type": "local",
+        "category": "fitness", "lat": 12.97, "lng": 77.59, "gstin": "29ABCDE1234F1Z5"})
+    assert r.status_code == 422 and "check digit" in r.json()["detail"]
+    r = client.post("/api/auth/register/advertiser", json={
+        "phone": "9871100002", "password": "s3cret-pass", "name": "No GST", "type": "local",
+        "category": "fitness", "lat": 12.97, "lng": 77.59})
+    assert r.status_code == 422                                  # GSTIN is mandatory
+
+
+def test_ads_go_live_only_after_gst_verification_and_deposit(client, fake):
+    a = reg_adv(client, "9871100003", "New Gym", "local", "fitness", 12.97, 77.59, verify=False, deposit=False)
+    h, aid = auth_h(a["token"]), a["user"]["advertiser_id"]
+    me = client.get(f"/api/advertisers/{aid}", headers=h).json()
+    assert me["kyc"]["status"] == "pending" and not me["kyc"]["can_go_live"] and len(me["kyc"]["blockers"]) == 2
+    camp = client.post("/api/campaigns", headers=h, json={
+        "kind": "audio", "name": "Promo", "prompt": "1 month free on annual membership", "bid_paise": 120}).json()
+    camp = wait_campaign(client, h, camp["id"])
+    assert camp["status"] == "pending_kyc"                      # ready, but not on the air
+    r = client.patch(f"/api/campaigns/{camp['id']}", headers=h, json={"status": "active"})
+    assert r.status_code == 409 and "GST verification pending" in r.json()["detail"]
+    assert client.post(f"/api/admin/advertisers/{aid}/kyc", headers=admin_h(client),
+                       json={"action": "reject"}).status_code == 422          # rejection needs a reason
+    client.post(f"/api/admin/advertisers/{aid}/kyc", headers=admin_h(client), json={"action": "approve"})
+    assert client.get(f"/api/campaigns/{camp['id']}", headers=h).json()["status"] == "pending_kyc"  # no deposit yet
+    client.post(f"/api/advertisers/{aid}/topup", json={"amount_paise": 20000}, headers=h)
+    assert client.get(f"/api/campaigns/{camp['id']}", headers=h).json()["status"] == "active"
+    # changing the GSTIN takes the ads off the air until it is verified again
+    client.patch(f"/api/advertisers/{aid}", headers=h, json={"gstin": adv_gstin("9871100099")})
+    assert client.get(f"/api/campaigns/{camp['id']}", headers=h).json()["status"] == "pending_kyc"
+    queue = client.get("/api/admin/kyc", headers=admin_h(client)).json()
+    assert any(x["id"] == aid and x["status"] == "pending" for x in queue)
+
+
+
+# ---------------------------------------------------------------- one bill, ad money -> rental -> merchant earnings
+
+def _sell(client, e, ws, items, rail="UPI_BANK", ack=True):
+    o = client.post("/api/orders", headers=e["mh"], json={"items": items}).json()
+    assert len(o["legs"]) == 1 and o["legs"][0]["amount_paise"] == o["total_paise"]   # no price division
+    qr = recv_until(ws, "show_qr")
+    assert (qr["seq"], qr["of"]) == (1, 1)
+    ad = recv_until(ws, "play_ad")                       # plays while the customer pays
+    if ack:
+        ws.send_text(json.dumps({"type": "play_ack", "playId": ad["playId"], "ms": 2400, "peakDb": -20}))
+        time.sleep(0.2)
+    client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": o["legs"][0]["id"], "rail": rail})
+    ok = recv_until(ws, "payment_success")
+    assert ok["settlement"] is None and ok["ad"] is None
+    return wait_order(client, e["mh"], o["id"])
+
+
+def test_bill_paid_in_full_and_ad_money_pays_rental_then_merchant_earns(client, fake):
+    e = setup_ecosystem(client)
+    mid = e["m"]["user"]["merchant_id"]
+    dev = e["dev"]
+    with client.websocket_connect(f"/ws/device/{dev['id']}?token={dev['token']}") as ws:
+        ws.send_text(json.dumps({"type": "hello", "cache": []}))
+        recv_until(ws, "hello_ack")
+        o = _sell(client, e, ws, ITEMS)                  # Rs 6,500 bill, Rs 1.20 ad
+        s = o["settlement"]
+        assert s["merchant_receives_paise"] == 650000 and "mdr_paise" not in s
+        assert (s["ad_revenue_paise"], s["platform_paise"], s["rental_paid_paise"], s["earnings_paise"]) == (120, 30, 90, 0)
+        # a bigger advertiser bid: rental gets fully paid, the rest becomes the merchant's earnings
+        client.patch(f"/api/campaigns/{e['camp']['id']}", headers=e["fh"],
+                     json={"bid_paise": 20000, "daily_cap_paise": 100000})
+        s = _sell(client, e, ws, ITEMS[1:])["settlement"]
+        assert (s["ad_revenue_paise"], s["platform_paise"], s["rental_paid_paise"], s["earnings_paise"]) == \
+               (20000, 5000, 12500 - 90, 15000 - (12500 - 90))
+    t = client.get(f"/api/merchants/{mid}/earnings", headers=e["mh"]).json()
+    assert t["totals"]["lifetime_paise"] == 15000 - 12410 and t["totals"]["today_paise"] == t["totals"]["lifetime_paise"]
+    assert t["rental"]["due_paise"] == 0 and t["totals"]["plays_lifetime"] == 2
+    assert t["by_advertiser"][0]["name"] == "FitZone Gym" and t["by_advertiser"][0]["plays"] == 2
+    assert len(t["recent"]) == 2 and t["daily"][-1]["earnings_paise"] == t["totals"]["lifetime_paise"]
+    admin = client.get("/api/admin/stats", headers=admin_h(client)).json()
+    assert admin["ledger_invariant_paise"] == 0 and admin["merchant_earnings_paise"] == 2590
+    assert client.get(f"/api/merchants/{mid}/earnings", headers=e["fh"]).status_code == 403   # merchant-only
+
+
+def test_self_payment_earns_no_ad_money(client, fake):
+    e = setup_ecosystem(client)
+    o = client.post("/api/orders", headers=e["mh"], json={"items": ITEMS[:1]}).json()
+    client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": o["legs"][0]["id"], "rail": "UPI_BANK",
+                                                         "payer": "sharma.electronics@okicici"})
+    s = wait_order(client, e["mh"], o["id"])["settlement"]
+    assert s["ad_revenue_paise"] == 0 and s["earnings_paise"] == 0
+
+
+def test_mock_pay_requires_owner_or_device(client, fake):
+    e = setup_ecosystem(client)
+    order = client.post("/api/orders", headers=e["mh"], json={"items": ITEMS[1:]}).json()
+    leg = order["legs"][0]["id"]
+    assert client.post("/api/mock/pay", json={"leg_id": leg, "rail": "UPI_BANK"}).status_code == 403
+    assert client.post("/api/mock/pay", headers=e["fh"], json={"leg_id": leg, "rail": "UPI_BANK"}).status_code == 403
+    assert client.post("/api/mock/pay", headers=e["mh"], json={"leg_id": leg}).status_code == 422  # method required
+    assert client.post("/api/mock/pay", json={"leg_id": leg, "rail": "UPI_BANK",
+                                              "device_token": e["dev"]["token"]}).status_code == 200
+
+
+def test_ai_outage_uses_fallbacks_and_says_so(client, fake):
+    m = reg_merchant(client)
+    fake.mode = "down"
+    parsed = client.post("/api/bills/parse", headers=auth_h(m["token"]),
+                         json={"text": "Mixer Grinder 4700\nWarranty 1,800"}).json()
+    assert parsed["source"] == "fallback" and len(parsed["items"]) == 2
+    a = reg_adv(client, "9833333333", "Dr. Smile Dental", "local", "healthcare", 12.97, 77.59)
+    camp = client.post("/api/campaigns", headers=auth_h(a["token"]), json={
+        "kind": "audio", "name": "Check-up", "prompt": "Free dental check-up this week", "bid_paise": 90}).json()
+    camp = wait_campaign(client, auth_h(a["token"]), camp["id"])
+    assert camp["creative"]["source"] == "fallback" and "503" in camp["creative"]["fallback_reason"]
+    assert camp["status"] == "failed" and "voice-over" in camp["error"]     # no voice configured -> honest failure
+
+
+def test_english_brief_becomes_a_hindi_ad_even_if_gemini_is_down(client, fake, fake_sarvam):
+    a = reg_adv(client, "9833300001", "FitZone Gym", "local", "fitness", 12.97, 77.59)
+    h = auth_h(a["token"])
+    fake.mode = "down"
+    camp = client.post("/api/campaigns", headers=h, json={
+        "kind": "audio", "name": "Hindi promo", "prompt": "One month free on annual membership",
+        "lang": "hi", "bid_paise": 120}).json()
+    cr = wait_campaign(client, h, camp["id"])["creative"]
+    assert cr["source"] == "fallback" and cr["script"].startswith("[hi]")    # translated by Sarvam
+    assert "translated to Hindi by Sarvam" in cr["fallback_reason"] and cr["voice"].startswith("sarvam")
+    assert client.post("/api/campaigns", headers=h, json={
+        "kind": "subvention", "name": "x", "prompt": "abc def", "bid_paise": 100}).status_code == 422

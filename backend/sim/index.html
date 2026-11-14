@@ -287,11 +287,7 @@
   async function onSuccess(m) {
     current = { legId: null }; $("payBtn").disabled = true;
     $("okAmt").textContent = inr(m.amount);
-    const s = m.settlement || {};
-    const by = (s.coveredBy || []).map(x => `${x.name} ${inr(x.amount)}`).join(" + ");
-    $("okSettle").innerHTML = s.mdr
-      ? `Payment fee <b>${inr(s.mdr)}</b> covered <b>${s.coveragePct}%</b>${by ? " by " + by : ""}<br>Merchant receives <b>${inr(s.merchantReceives)}</b> · you paid no surcharge`
-      : `No payment fee on this bill. Merchant receives <b>${inr(s.merchantReceives ?? m.amount)}</b>`;
+    $("okSettle").innerHTML = `Paid in full · merchant receives <b>${inr(m.amount)}</b>`;
     const bn = $("okBanner");
     if (m.banner) {
       bn.style.display = "flex"; bn.style.background = m.banner.bg; bn.style.color = m.banner.fg;

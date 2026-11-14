@@ -10,10 +10,7 @@ import LocationPicker from '../components/LocationPicker.jsx';
 import CreativePreview from '../components/CreativePreview.jsx';
 
 const TOPUP_PRESETS = [10000, 30000, 100000, 500000];
-const DEFAULTS = {
-  audio: { bid: '1.20', cap: '50' },
-  subvention: { bid: '50', cap: '1000' },
-};
+const DEFAULTS = { bid: '1.20', cap: '50' };
 
 /* ------------------------------------------------------------------ wallet */
 
@@ -118,7 +115,7 @@ function Wallet({ advertiser, reload }) {
         )
       }
     >
-      <p className="mb-4 text-body-sm text-slate-500">You're charged only for verified plays and matched sales. Funds are held when an ad is scheduled and released if the play isn't verified.</p>
+      <p className="mb-4 text-body-sm text-slate-500">You're charged only for verified plays on paid bills. Funds are held when an ad is scheduled and released if the play isn't verified or the bill isn't paid.</p>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3 rounded-xl border border-paytm-cyan/20 bg-gradient-to-br from-paytm-cyan-light/70 to-slate-50 p-4">
         <div>
           <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Available balance</span>
@@ -310,29 +307,22 @@ function Geofence({ center, setCenter, radius, setRadius, enabled }) {
 function CampaignBuilder({ advertiser, onCreated }) {
   const { textModel, ttsModel, aiConfigured } = useConfig();
   const isBrand = advertiser.type === 'brand';
-  const [kind, setKind] = useState(isBrand ? 'subvention' : 'audio');
+  const [inputMode, setInputMode] = useState('type'); // 'type' (English text) | 'speak'
   const [prompt, setPrompt] = useState('');
   const [speechLang, setSpeechLang] = useState('en-IN');
   const [name, setName] = useState('');
   const [lang, setLang] = useState('en');
-  const [bid, setBid] = useState(DEFAULTS[isBrand ? 'subvention' : 'audio'].bid);
+  const [bid, setBid] = useState(DEFAULTS.bid);
   const [tagBid, setTagBid] = useState(''); // empty = 75% of the full-ad bid
-  const [cap, setCap] = useState(DEFAULTS[isBrand ? 'subvention' : 'audio'].cap);
+  const [cap, setCap] = useState(DEFAULTS.cap);
   const hasHome = advertiser.lat !== null && advertiser.lat !== undefined;
   const [geofence, setGeofence] = useState(!isBrand || hasHome);
   const [center, setCenter] = useState(hasHome ? { lat: advertiser.lat, lng: advertiser.lng } : null);
   const [radius, setRadius] = useState(500);
   const [targets, setTargets] = useState([]);
-  const [skus, setSkus] = useState([]);
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
   const [touched, setTouched] = useState(false);
-
-  const changeKind = (k) => {
-    setKind(k);
-    setBid(DEFAULTS[k].bid);
-    setCap(DEFAULTS[k].cap);
-  };
 
   const bidP = toPaise(bid);
   const capP = toPaise(cap);
@@ -342,9 +332,8 @@ function CampaignBuilder({ advertiser, onCreated }) {
     name.trim().length < 2 && 'Give the campaign a name.',
     bidP <= 0 && 'Set a bid.',
     capP > 0 && capP < bidP && 'The daily cap must be at least one bid.',
-    kind === 'audio' && tagP !== null && (tagP <= 0 || tagP >= bidP) && 'The sponsor tag must cost less than the full ad.',
+    tagP !== null && (tagP <= 0 || tagP >= bidP) && 'The sponsor tag must cost less than the full ad.',
     geofence && !center && 'Pick the geofence centre on the map.',
-    kind === 'subvention' && skus.length === 0 && 'Add at least one product keyword for subvention.',
   ].filter(Boolean);
 
   const submit = async (deploy) => {
@@ -354,15 +343,14 @@ function CampaignBuilder({ advertiser, onCreated }) {
     setErr(null);
     try {
       const body = {
-        kind,
+        kind: 'audio',
         name: name.trim(),
         prompt: prompt.trim(),
         lang,
         radius_m: geofence ? radius : 0,
         target_categories: targets,
-        sku_keywords: kind === 'subvention' ? skus : [],
         bid_paise: bidP,
-        ...(kind === 'audio' && tagP !== null ? { tag_bid_paise: tagP } : {}),
+        ...(tagP !== null ? { tag_bid_paise: tagP } : {}),
         daily_cap_paise: capP,
         deploy,
         ...(geofence && center ? { lat: center.lat, lng: center.lng } : {}),
@@ -389,7 +377,7 @@ function CampaignBuilder({ advertiser, onCreated }) {
             <Icon name="auto_awesome" className="text-[22px] text-paytm-cyan-dark" />
             <h2 className="text-headline-md text-paytm-navy">Create an ad in 30 seconds</h2>
           </div>
-          <p className="mt-1 text-body-md text-slate-600">Say or type your offer. AI writes the audio script, voices it and designs the counter-screen banner.</p>
+          <p className="mt-1 text-body-md text-slate-600">Type your offer in English or say it. AI writes the ad in the language you pick, voices it and designs the counter-screen banner.</p>
         </div>
         {aiConfigured && (
           <span className="shrink-0 rounded-md border border-paytm-cyan/30 bg-paytm-cyan-light px-2.5 py-1 text-label-sm font-bold text-paytm-navy" title={ttsModel ? `Voice: ${ttsModel}` : undefined}>
@@ -399,20 +387,20 @@ function CampaignBuilder({ advertiser, onCreated }) {
       </div>
       <AiWarning className="mb-4" what="Ad copy and voice-over" />
 
-      <div className="mb-5 grid grid-cols-1 gap-2 rounded-xl border border-slate-200/80 bg-slate-100 p-1.5 sm:grid-cols-2" role="tablist">
+      <div className="mb-3 grid grid-cols-2 gap-2 rounded-xl border border-slate-200/80 bg-slate-100 p-1.5" role="tablist" aria-label="How you describe the offer">
         {[
-          ['audio', 'campaign', 'Audio ad · pay per play'],
-          ['subvention', 'sell', 'Brand subvention · pay per sale'],
+          ['type', 'keyboard', 'Type in English'],
+          ['speak', 'mic', 'Hold to talk'],
         ].map(([k, ic, label]) => (
           <button
             key={k}
             type="button"
             role="tab"
-            aria-selected={kind === k}
-            onClick={() => changeKind(k)}
-            className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-label-md transition-all ${kind === k ? 'border border-slate-200/60 bg-white font-bold text-paytm-navy shadow-sm' : 'font-semibold text-slate-600 hover:text-paytm-navy'}`}
+            aria-selected={inputMode === k}
+            onClick={() => setInputMode(k)}
+            className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-label-md transition-all ${inputMode === k ? 'border border-slate-200/60 bg-white font-bold text-paytm-navy shadow-sm' : 'font-semibold text-slate-600 hover:text-paytm-navy'}`}
           >
-            <Icon name={ic} className={`text-[18px] ${kind === k ? 'text-paytm-cyan-dark' : ''}`} />
+            <Icon name={ic} className={`text-[18px] ${inputMode === k ? 'text-paytm-cyan-dark' : ''}`} />
             {label}
           </button>
         ))}
@@ -425,23 +413,53 @@ function CampaignBuilder({ advertiser, onCreated }) {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           maxLength={1000}
-          placeholder={kind === 'audio' ? 'Describe your offer, for example what it is, how long it runs and what customers get' : 'Describe the subvention, for example which products and what discount you fund per sale'}
-          aria-label="Campaign prompt"
+          lang={inputMode === 'type' ? 'en' : undefined}
+          placeholder={
+            inputMode === 'type'
+              ? 'Write your offer in English, for example: 20% off all mixer grinders this week at Sharma Electronics, MG Road'
+              : 'Hold the button and say your offer in any language; the words appear here and you can edit them'
+          }
+          aria-label="Describe your offer"
         />
-        <div className="mt-2 flex flex-col gap-2 border-t border-slate-200/60 pt-2 sm:flex-row sm:items-start sm:justify-between">
-          <HoldToTalk speechLang={speechLang} onText={(t) => setPrompt((p) => (p.trim() ? `${p.trim()} ${t}` : t))} />
-          <label className="flex shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 shadow-sm">
-            <Icon name="translate" className="text-[15px] text-slate-500" />
-            <select className="border-0 bg-transparent py-0 pl-0 pr-7 text-label-sm font-medium text-slate-700 focus:ring-0" value={speechLang} onChange={(e) => setSpeechLang(e.target.value)} aria-label="Language you speak in">
-              {LANGS.map((l) => (
-                <option key={l.value} value={l.bcp47}>Speak {l.label}</option>
-              ))}
-            </select>
-          </label>
+        <div className="mt-2 flex flex-col gap-2 border-t border-slate-200/60 pt-2 sm:flex-row sm:items-center sm:justify-between">
+          {inputMode === 'speak' ? (
+            <>
+              <HoldToTalk speechLang={speechLang} onText={(t) => setPrompt((p) => (p.trim() ? `${p.trim()} ${t}` : t))} />
+              <label className="flex shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 shadow-sm">
+                <Icon name="translate" className="text-[15px] text-slate-500" />
+                <select className="border-0 bg-transparent py-0 pl-0 pr-7 text-label-sm font-medium text-slate-700 focus:ring-0" value={speechLang} onChange={(e) => setSpeechLang(e.target.value)} aria-label="Language you speak in">
+                  {LANGS.map((l) => (
+                    <option key={l.value} value={l.bcp47}>Speak {l.label}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : (
+            <span className="flex items-center gap-1.5 text-label-sm text-slate-600">
+              <Icon name="translate" className="text-[16px] text-paytm-cyan-dark" />
+              English brief → ad written and voiced in
+            </span>
+          )}
+          {inputMode === 'type' && (
+            <label className="flex shrink-0 items-center gap-1.5 rounded-md border border-paytm-cyan/40 bg-paytm-cyan-light px-2.5 py-1 shadow-sm">
+              <select className="border-0 bg-transparent py-0 pl-0 pr-7 text-label-sm font-bold text-paytm-navy focus:ring-0" value={lang} onChange={(e) => setLang(e.target.value)} aria-label="Language of the generated ad">
+                {LANGS.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </div>
+      {lang !== 'en' && (
+        <p className="-mt-4 mb-6 text-label-sm text-slate-500">
+          AI translates your brief and writes the ad in {LANGS.find((l) => l.value === lang)?.label || lang}. You can check the script and listen before it goes live.
+        </p>
+      )}
 
-      <div className={`mb-6 grid grid-cols-2 gap-3 ${kind === 'audio' ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="rounded-xl border border-slate-200/80 bg-slate-50 p-3">
           <label className="mb-1 block text-label-sm text-slate-500" htmlFor="cmp-name">
             Campaign name
@@ -462,14 +480,14 @@ function CampaignBuilder({ advertiser, onCreated }) {
         </div>
         <div className="rounded-xl border border-slate-200/80 bg-slate-50 p-3">
           <label className="mb-1 block text-label-sm text-slate-500" htmlFor="cmp-bid">
-            {kind === 'audio' ? 'Bid / verified play' : 'Bid / matched sale'}
+            Bid / verified play
           </label>
           <div className="flex items-center rounded-lg border border-input-border bg-white px-2 focus-within:border-primary">
             <span className="mr-1 text-label-sm font-bold text-paytm-cyan-dark">₹</span>
             <input id="cmp-bid" className="tnum w-full min-w-0 border-0 bg-transparent px-0 py-1.5 text-label-md font-semibold focus:ring-0" inputMode="decimal" value={bid} onChange={(e) => setBid(e.target.value)} />
           </div>
         </div>
-        {kind === 'audio' && (
+        {(
           <div className="rounded-xl border border-slate-200/80 bg-slate-50 p-3">
             <label className="mb-1 block text-label-sm text-slate-500" htmlFor="cmp-tag" title="Busy hours: only a 1-second 'Sponsored by ...' line after the payment message">
               Sponsor tag (busy hour)
@@ -493,12 +511,6 @@ function CampaignBuilder({ advertiser, onCreated }) {
       </div>
 
       <div className="mb-6 space-y-3">
-        {kind === 'subvention' && (
-          <div>
-            <span className="field-label">Product keywords (matched against bill items)</span>
-            <ChipInput values={skus} onChange={setSkus} placeholder="e.g. a product line or SKU name, press Enter" />
-          </div>
-        )}
         <details className="rounded-xl border border-slate-200/80 bg-slate-50">
           <summary className="cursor-pointer px-3 py-2 text-label-md text-paytm-navy">Target merchant categories {targets.length ? `(${targets.length})` : '(all)'}</summary>
           <div className="border-t border-slate-200/80 p-3">
@@ -613,7 +625,7 @@ function Preview({ campaign, advertiser, onChanged }) {
               <b>Generation failed.</b> {campaign.error || 'No reason was given.'}
             </div>
           )}
-          {campaign.creative && <CreativePreview creative={campaign.creative} advertiserName={advertiser.name} />}
+          {campaign.creative && <CreativePreview creative={campaign.creative} advertiserName={advertiser.name} brief={campaign.prompt} />}
           {campaign.status !== 'generating' && (
             <div className="space-y-2">
               {!open ? (
@@ -686,11 +698,10 @@ function CampaignRow({ c, selected, onSelect, onChanged }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-[16px] font-bold text-paytm-navy">{c.name}</span>
-            <span className="text-label-sm text-slate-500">· {c.kind}</span>
             <Pill status={c.status} dot />
           </div>
           <p className="mt-0.5 text-label-sm text-slate-600">
-            {c.kind === 'audio' ? <>Ad {inr(c.bid_paise)} · Sponsor tag {inr(c.tag_bid_paise)}</> : <>Bid {inr(c.bid_paise)}</>} · Cap {c.daily_cap_paise ? `${inr(c.daily_cap_paise, { decimals: 0 })}/day` : 'none'} · {c.lat !== null && c.lat !== undefined && c.radius_m ? `Geofence ${c.radius_m >= 1000 ? `${(c.radius_m / 1000).toFixed(1)} km` : `${c.radius_m} m`}` : 'No geofence'} · {langLabel(c.lang)}
+            Ad {inr(c.bid_paise)} · Sponsor tag {inr(c.tag_bid_paise)} · Cap {c.daily_cap_paise ? `${inr(c.daily_cap_paise, { decimals: 0 })}/day` : 'none'} · {c.lat !== null && c.lat !== undefined && c.radius_m ? `Geofence ${c.radius_m >= 1000 ? `${(c.radius_m / 1000).toFixed(1)} km` : `${c.radius_m} m`}` : 'No geofence'} · {langLabel(c.lang)}
           </p>
         </div>
         {action && (
@@ -725,10 +736,66 @@ function CampaignRow({ c, selected, onSelect, onChanged }) {
         </span>
         <span className="text-slate-300">|</span>
         <span>
-          <b className="tnum text-paytm-navy">{num(st.claims ?? 0)}</b> <span className="text-slate-500">claims</span>
+          <b className="tnum text-paytm-navy">{num(st.tag_plays ?? 0)}</b> <span className="text-slate-500">sponsor line{st.tag_plays === 1 ? '' : 's'}</span>
         </span>
       </div>
       <ErrorNote error={err} title="Update failed" />
+    </div>
+  );
+}
+
+// GST verification + Rs 200 deposit gate: campaigns wait as "pending verification" until both are done.
+function KycBanner({ advertiser, onChanged }) {
+  const k = advertiser.kyc;
+  const [gst, setGst] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  if (!k) return null;
+  if (k.can_go_live) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-body-sm text-emerald-800">
+        <Icon name="verified" className="text-[18px] text-success-green" />
+        GST verified <span className="font-mono">{k.gstin}</span> · your ads can go live
+      </div>
+    );
+  }
+  const resubmit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.updateAdvertiser(advertiser.id, { gstin: gst.trim().toUpperCase() });
+      setGst('');
+      onChanged?.();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const rejected = k.status === 'rejected';
+  return (
+    <div className={`rounded-xl border p-4 ${rejected ? 'border-rose-300 bg-rose-50' : 'border-amber-300 bg-amber-50'}`}>
+      <div className="flex items-start gap-3">
+        <Icon name={rejected ? 'gpp_bad' : 'pending_actions'} className={`text-[24px] ${rejected ? 'text-rose-600' : 'text-amber-600'}`} />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="text-label-lg text-on-surface">Your ads aren't live yet</div>
+          <ul className="list-disc pl-5 text-body-sm text-on-surface">
+            {k.blockers.map((b) => <li key={b}>{b}</li>)}
+          </ul>
+          <div className="text-body-sm text-on-surface-variant">
+            GSTIN on file: <span className="font-mono">{k.gstin || 'none'}</span>. You can build and preview campaigns now; they go live automatically once this is done.
+          </div>
+          {rejected && (
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <input className="input input-sm w-52 font-mono uppercase" maxLength={15} placeholder="Correct GSTIN" value={gst} onChange={(e) => setGst(e.target.value)} />
+              <button type="button" className="btn btn-navy btn-sm" disabled={busy || gst.trim().length !== 15} onClick={resubmit}>
+                {busy && <Spinner />} Resubmit for verification
+              </button>
+            </div>
+          )}
+          {err && <div className="text-body-sm text-error-red">{err.message}</div>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -765,7 +832,7 @@ export default function Advertiser() {
   return (
     <div className="shell space-y-6 py-6">
       <PageHead
-        crumbs={['Advertiser', 'AdPulse self-serve']}
+        crumbs={['Advertiser', 'SoundShare Ads']}
         title={advertiser.name}
         chips={
           <span className="rounded-full border border-paytm-cyan/30 bg-paytm-cyan-light px-2.5 py-0.5 text-label-sm text-paytm-navy">
@@ -774,6 +841,7 @@ export default function Advertiser() {
         }
         right={advertiser.address && <span className="flex items-center gap-1 text-body-sm text-on-surface-variant"><Icon name="location_on" className="text-[16px]" />{advertiser.address}</span>}
       />
+      <KycBanner advertiser={advertiser} onChanged={reload} />
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
         <section className="min-w-0 space-y-6 lg:col-span-7">
           <CampaignBuilder

@@ -181,6 +181,12 @@ class Advertiser(Base):
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lng: Mapped[float | None] = mapped_column(Float, nullable=True)
     address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # KYC: an advertiser's ads go live only once its GSTIN is verified (and the minimum deposit is in).
+    gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    kyc_status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | verified | rejected
+    kyc_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kyc_method: Mapped[str | None] = mapped_column(String(20), nullable=True)  # manual | gsp | paytm_kyc
+    kyc_verified_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
 
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import adx, auth, creative, languages, llm, settlement
+from .. import adx, auth, creative, kyc, languages, llm, settlement
 from ..db import get_db, money_lock
 from ..hub import hub
 from ..models import Advertiser, Campaign, Claim, Creative, Device, TopUp, User
@@ -50,6 +50,7 @@ def get_advertiser(aid: str, db: Session = Depends(get_db), user: User = Depends
 
 class AdvertiserPatch(BaseModel):
     name: str | None = Field(None, min_length=2, max_length=120)
+    gstin: str | None = Field(None, min_length=15, max_length=15)
     category: str | None = Field(None, min_length=2, max_length=40)
     lat: float | None = Field(None, ge=-90, le=90)
     lng: float | None = Field(None, ge=-180, le=180)
@@ -61,7 +62,15 @@ def patch_advertiser(aid: str, body: AdvertiserPatch, db: Session = Depends(get_
                      user: User = Depends(auth.current_user)):
     auth.ensure_advertiser(user, aid, write=True)
     a = _adv(db, aid)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    new_gstin = data.pop("gstin", None)
+    if new_gstin:
+        g = auth.normalize_gstin(new_gstin)
+        other = db.scalars(select(Advertiser).where(Advertiser.gstin == g, Advertiser.id != a.id)).first()
+        if other:
+            raise HTTPException(409, "An advertiser with this GSTIN is already registered")
+        kyc.submit(db, a, g)
+    for k, v in data.items():
         setattr(a, k, v.lower() if k == "category" and v else v)
     if body.name:
         user.name = a.name
@@ -147,7 +156,7 @@ def soundboxes_in_radius(lat: float = Query(..., ge=-90, le=90), lng: float = Qu
 # ------------------------------------------------------------------ campaigns
 
 class CampaignIn(BaseModel):
-    kind: str = Field("audio", pattern="^(audio|subvention)$")
+    kind: str = Field("audio", pattern="^audio$")
     name: str = Field(..., min_length=2, max_length=120)
     prompt: str = Field(..., min_length=3, max_length=1000)
     lang: str = Field("en", pattern=languages.PATTERN)
@@ -242,6 +251,11 @@ def patch_campaign(cid: str, body: CampaignPatch, db: Session = Depends(get_db),
             raise HTTPException(409, f"Campaign is {c.status}; regenerate it first")
         if data["status"] == "active" and c.kind == "audio" and not (c.creative and c.creative.audio_hash):
             raise HTTPException(409, "This ad has no voice-over yet; regenerate it before going live")
+        if data["status"] == "active" and not kyc.can_go_live(db, c.advertiser):
+            c.status, c.deploy_on_ready = "pending_kyc", True
+            db.commit()
+            raise HTTPException(409, "Not live yet: " + "; ".join(kyc.blockers(db, c.advertiser))
+                                + ". It goes live automatically once these are done.")
     for k, v in data.items():
         setattr(c, k, v)
     if data.get("status") == "active":
@@ -263,7 +277,7 @@ def regenerate(cid: str, body: RegenIn, db: Session = Depends(get_db), user: Use
             creative.moderate(body.prompt)
         except creative.CreativeRejected as e:
             raise HTTPException(422, str(e))
-    c.deploy_on_ready = c.status in ("active",)
+    c.deploy_on_ready = c.status in ("active", "pending_kyc")
     c.status, c.error = "generating", None
     db.commit()
     creative.generate_async(cid, body.prompt, body.lang)

@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, or_, select
 
-from . import auth, creative, factorizer, ledger
+from . import auth, creative, factorizer, gstin, kyc, ledger
 from .db import session_scope
 from .models import (Advertiser, AuthSession, Campaign, CatalogItem, Claim, Creative, Device, Hold, LedgerEntry,
-                     Leg, Merchant, Order, OrderItem, TopUp, User)
+                     Leg, Merchant, Order, OrderItem, TopUp, User, utcnow)
 from .money import inr, new_id
 
 log = logging.getLogger("zeromdr.demo")
@@ -53,22 +53,21 @@ MERCHANTS = [
                  ("Masala Chai", 2000), ("Home Delivery", 4000), ("Party Catering Service (per plate)", 25000)]},
 ]
 ADVERTISERS = [
-    {"phone": "9000000201", "name": "FitZone Gym", "type": "local", "category": "fitness",
+    {"phone": "9000000201", "name": "FitZone Gym", "type": "local", "category": "fitness", "pan": "AAFFZ1201G",
      "lat": 12.9733, "lng": 77.5958, "address": "Residency Road, Bengaluru", "credit": 30000,
      "campaign": {"kind": "audio", "name": "Annual membership promo",
                   "prompt": "1 month free on annual membership, this week only", "lang": "en",
                   "radius_m": 500, "bid_paise": 120, "daily_cap_paise": 5000}},
-    {"phone": "9000000202", "name": "Dr. Smile Dental", "type": "local", "category": "healthcare",
+    {"phone": "9000000202", "name": "Dr. Smile Dental", "type": "local", "category": "healthcare", "pan": "AADFS1202D",
      "lat": 12.9699, "lng": 77.5930, "address": "Church Street, Bengaluru", "credit": 20000,
      "campaign": {"kind": "audio", "name": "Free check-up week",
                   "prompt": "Free dental check-up this week", "lang": "hi",
                   "radius_m": 400, "bid_paise": 90, "daily_cap_paise": 3000}},
-    {"phone": "9000000203", "name": "Havells", "type": "brand", "category": "appliance",
+    {"phone": "9000000203", "name": "Havells", "type": "brand", "category": "appliance", "pan": "AAACH1203H",
      "lat": None, "lng": None, "address": None, "credit": 1000000,
-     "campaign": {"kind": "subvention", "name": "Appliance clearing rights",
-                  "prompt": "Havells pays the payment fee when you buy a Havells appliance", "lang": "en",
-                  "radius_m": 0, "bid_paise": 10500, "daily_cap_paise": 0,
-                  "target_categories": ["appliance"], "sku_keywords": ["havells"]}},
+     "campaign": {"kind": "audio", "name": "Mixer grinder festive offer",
+                  "prompt": "20% off on all Havells mixer grinders this week", "lang": "en",
+                  "radius_m": 0, "bid_paise": 150, "daily_cap_paise": 20000}},
 ]
 DEMO_PHONES = [m["phone"] for m in MERCHANTS] + [a["phone"] for a in ADVERTISERS]
 
@@ -122,12 +121,23 @@ def seed() -> list[dict]:
                         "device_id": did, "device_token": token})
 
     for spec in ADVERTISERS:
+        demo_gstin = gstin.make("29", spec["pan"])  # demo GSTIN with a valid check digit (not a real business)
         with session_scope() as db:
-            if _user(db, spec["phone"]):
-                out.append({"role": "advertiser", "name": spec["name"], "phone": spec["phone"], "status": "exists"})
+            u = _user(db, spec["phone"])
+            if u:
+                a = db.get(Advertiser, u.advertiser_id)
+                note = "already verified"
+                if a.kyc_status != "verified":
+                    a.gstin = a.gstin or demo_gstin
+                    kyc.approve(db, a, note="Demo account", method="demo")
+                    note = f"GSTIN {a.gstin} verified (demo)"
+                out.append({"role": "advertiser", "name": spec["name"], "phone": spec["phone"], "status": "exists",
+                            "wallet": note})
                 continue
             a = Advertiser(id=new_id("A", 4), name=spec["name"], type=spec["type"], category=spec["category"],
-                           lat=spec["lat"], lng=spec["lng"], address=spec["address"])
+                           lat=spec["lat"], lng=spec["lng"], address=spec["address"], gstin=demo_gstin,
+                           kyc_status="verified", kyc_method="demo", kyc_note="Demo account",
+                           kyc_verified_at=utcnow())
             db.add(a)
             db.flush()
             db.add(User(id=new_id("U", 5), phone=spec["phone"], password_hash=auth.hash_password(DEMO_PASSWORD),
@@ -169,20 +179,13 @@ def remove() -> dict:
                 f"Demo advertisers sponsored {len(foreign)} order(s) of real merchants (e.g. {foreign[0]}). "
                 "Removing them would rewrite real ledger history, so nothing was deleted. "
                 "Pause the demo campaigns instead.")
-        accounts = [f"merchant:{m}" for m in mids] + [f"adv:{a}" for a in aids]
+        accounts = ([f"merchant:{m}" for m in mids] + [f"merchant_earnings:{m}" for m in mids]
+                    + [f"adv:{a}" for a in aids])
         refs = [f"order:{o}" for o in oids]
         rental_refs = [f"rental:{m}:%" for m in mids]
         txn_q = select(LedgerEntry.txn_id).where(or_(LedgerEntry.account.in_(accounts), LedgerEntry.ref.in_(refs),
                                                      *[LedgerEntry.ref.like(r) for r in rental_refs]))
         txns = set(db.scalars(txn_q)) if (accounts or refs) else set()
-        if txns:
-            shared_in = db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0)).where(
-                LedgerEntry.txn_id.in_(txns), LedgerEntry.account == "shared_pool")).scalar_one()
-            shared_now = db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0)).where(
-                LedgerEntry.account == "shared_pool")).scalar_one()
-            if shared_now - shared_in < 0:
-                raise RuntimeError("Demo shops' ad surplus has already paid real merchants' fees from the shared "
-                                   "pool; removing them would leave the pool negative, so nothing was deleted.")
         counts = {"users": len(users), "merchants": len(mids), "advertisers": len(aids), "orders": len(oids),
                   "campaigns": len(cids), "ledger_txns": len(txns)}
         if txns:

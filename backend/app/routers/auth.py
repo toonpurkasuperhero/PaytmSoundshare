@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import auth, languages
+from .. import auth, kyc, languages
 from ..db import get_db
 from ..models import Advertiser, Merchant, User
 from ..money import new_id
@@ -32,6 +32,7 @@ class AdvertiserReg(BaseModel):
     phone: str
     password: str = Field(..., max_length=128)
     name: str = Field(..., min_length=2, max_length=120)
+    gstin: str = Field(..., min_length=15, max_length=15)
     type: str = Field("local", pattern="^(local|brand)$")
     category: str = Field(..., min_length=2, max_length=40)
     lat: float | None = Field(None, ge=-90, le=90)
@@ -75,11 +76,15 @@ def register_advertiser(body: AdvertiserReg, db: Session = Depends(get_db)):
     auth.validate_password(body.password)
     if body.type == "local" and (body.lat is None or body.lng is None):
         raise HTTPException(422, "Local businesses need a location so ads reach nearby Soundboxes")
+    g = auth.normalize_gstin(body.gstin)
+    if db.scalars(select(Advertiser).where(Advertiser.gstin == g)).first():
+        raise HTTPException(409, "An advertiser with this GSTIN is already registered")
     a = Advertiser(id=new_id("A", 4), name=body.name.strip(), type=body.type,
                    category=body.category.strip().lower(), lat=body.lat, lng=body.lng,
                    address=(body.address or "").strip() or None)
     db.add(a)
     db.flush()
+    kyc.submit(db, a, g)
     u = _new_user(db, phone, body.password, "advertiser", a.name, advertiser_id=a.id)
     token = auth.create_session(db, u)
     db.commit()

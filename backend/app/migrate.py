@@ -16,6 +16,11 @@ COLUMNS = [
     ("campaigns", "tag_bid_paise", "INTEGER"),
     ("holds", "verified", "BOOLEAN NOT NULL DEFAULT 0"),
     ("holds", "sent_at", "TIMESTAMP"),
+    ("advertisers", "gstin", "VARCHAR(20)"),
+    ("advertisers", "kyc_status", "VARCHAR(12) NOT NULL DEFAULT 'pending'"),
+    ("advertisers", "kyc_note", "TEXT"),
+    ("advertisers", "kyc_method", "VARCHAR(20)"),
+    ("advertisers", "kyc_verified_at", "TIMESTAMP"),
 ]
 
 

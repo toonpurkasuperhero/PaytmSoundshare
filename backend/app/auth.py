@@ -24,7 +24,6 @@ log = logging.getLogger("zeromdr.auth")
 
 PBKDF2_ITER = 240_000
 PHONE_RE = re.compile(r"^[6-9]\d{9}$")
-GSTIN_RE = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 VPA_RE = re.compile(r"^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z][a-zA-Z0-9.\-]{1,64}$")
 
 
@@ -47,9 +46,11 @@ def validate_password(pw: str) -> None:
 
 
 def normalize_gstin(raw: str) -> str:
+    from . import gstin
     g = (raw or "").strip().upper()
-    if not GSTIN_RE.match(g):
-        raise HTTPException(422, "GSTIN must be a valid 15-character GSTIN (e.g. 29ABCDE1234F1Z5)")
+    err = gstin.problem(g)
+    if err:
+        raise HTTPException(422, err)
     return g
 
 

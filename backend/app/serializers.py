@@ -57,60 +57,21 @@ def catalog_dict(c: CatalogItem) -> dict:
 def merchant_dict(db: Session, m: Merchant, with_stats: bool = False) -> dict:
     d = {
         "id": m.id, "name": m.name, "category": m.category, "gstin": m.gstin, "lat": m.lat, "lng": m.lng,
-        "address": m.address, "lang": m.lang, "vpa": m.vpa, "factorization_enabled": m.factorization_enabled,
+        "address": m.address, "lang": m.lang, "vpa": m.vpa,
         "busy_mode": m.busy_mode,
         "blocked_categories": m.blocked_categories or [], "quiet_hours": m.quiet_hours,
         "device_ids": [dv.id for dv in m.devices], "created_at": m.created_at,
     }
     if with_stats:
+        from . import earnings
         settled = db.scalars(select(Order).where(Order.merchant_id == m.id, Order.status == "settled")).all()
-        ss = [o.settlement or {} for o in settled]
-        mdr = sum(s.get("mdr_paise", 0) for s in ss)
-        covered = sum(s.get("covered_paise", 0) for s in ss)
-        sponsored = sum(1 for s in ss if s.get("covered_paise", 0) > 0)
         d["stats"] = {
             "tx_count": len(settled),
             "gross_paise": sum(o.total_paise for o in settled),
-            "mdr_paise": mdr,
-            "covered_paise": covered,
-            "coverage_pct": round(100.0 * covered / mdr, 1) if mdr else 100.0,
-            "saved_by_factorization_paise": sum(s.get("saved_by_factorization_paise", 0) for s in ss),
-            "sponsored_tx": sponsored,
-            **_soundshare_stats(db, m, ss),
+            "ad_revenue_paise": sum((o.settlement or {}).get("ad_revenue_paise", 0) for o in settled),
+            **earnings.summary(db, m),
         }
     return d
-
-
-def _soundshare_stats(db: Session, m: Merchant, settled: list[dict]) -> dict:
-    """Rental paid by ads this month, and what this merchant gave to / got from the shared pool."""
-    import math
-
-    from .settlement import RENTAL_ACCOUNT, SHARED_POOL, rental_ref
-    paid = db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0)).where(
-        LedgerEntry.ref == rental_ref(m.id), LedgerEntry.account == RENTAL_ACCOUNT)).scalar_one()
-    pool_balance = db.execute(select(func.coalesce(func.sum(LedgerEntry.amount_paise), 0))
-                              .where(LedgerEntry.account == SHARED_POOL)).scalar_one()
-    plays = db.scalars(select(Hold.amount_paise).join(Order, Hold.order_id == Order.id).where(
-        Order.merchant_id == m.id, Hold.kind == "audio", Hold.status == "committed")
-        .order_by(Hold.created_at.desc()).limit(200)).all()
-    per_play = round(sum(plays) / len(plays)) if plays else None
-    to_merchant = per_play * (1 - settings.platform_surplus_take_pct / 100) if per_play else None
-    fee = m.monthly_rental_paise
-    due = max(0, fee - paid)
-    fees = [x["mdr_paise"] for x in settled if x.get("mdr_paise", 0) > 0][-30:]
-    return {
-        "rental": {"monthly_fee_paise": fee, "paid_this_month_paise": min(paid, fee), "due_paise": due,
-                   # verified ad plays on fee-free sales still needed to clear this month's rental
-                   "plays_to_cover": (math.ceil(due / to_merchant) if due and to_merchant else (0 if not due else None))},
-        "shared": {"contributed_paise": sum(x.get("shared_contributed_paise", 0) for x in settled),
-                   "received_for_fees_paise": sum(x.get("shared_drawn_paise", 0) for x in settled),
-                   "received_for_rental_paise": sum(x.get("rental_from_pool_paise", 0) for x in settled),
-                   "network_pool_balance_paise": pool_balance,
-                   "daily_cap_paise": settings.shared_pool_daily_cap_paise},
-        "ad_income_per_play_paise": per_play,
-        "avg_fee_paise": round(sum(fees) / len(fees)) if fees else None,
-        "platform_take_pct": settings.platform_surplus_take_pct,
-    }
 
 
 def creative_dict(cr: Creative | None) -> dict | None:
@@ -158,8 +119,10 @@ def campaign_dict(db: Session, c: Campaign) -> dict:
 
 def advertiser_dict(db: Session, a: Advertiser, with_stats: bool = False) -> dict:
     available = adx.available_paise(db, a.id)
+    from . import kyc
     d = {"id": a.id, "name": a.name, "type": a.type, "category": a.category, "lat": a.lat, "lng": a.lng,
-         "address": a.address, "balance_paise": available, "created_at": a.created_at}
+         "address": a.address, "balance_paise": available, "created_at": a.created_at,
+         "gstin": a.gstin, "kyc": kyc.status_dict(db, a)}
     if with_stats:
         mine = Hold.advertiser_id == a.id
         plays = _count_holds(db, mine, Hold.kind == "audio", Hold.status == "committed")

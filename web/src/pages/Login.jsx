@@ -18,15 +18,15 @@ export function AuthFrame({ children, title, subtitle }) {
       <aside className="relative hidden overflow-hidden rounded-2xl bg-gradient-to-br from-paytm-navy to-navy-deep p-8 text-white shadow-md lg:col-span-5 lg:block">
         <div className="pointer-events-none absolute -bottom-10 -right-10 h-48 w-48 rounded-full bg-paytm-cyan/20 blur-2xl" />
         <div className="eyebrow">Paytm SoundShare</div>
-        <h2 className="mt-3 text-headline-lg">Merchants keep 100% of the bill.</h2>
+        <h2 className="mt-3 text-headline-lg">Your Soundbox earns for you.</h2>
         <p className="mt-3 text-body-lg text-white/80">
-          Short local ads play on the Soundbox after each payment. Ad spend and brand subvention bids pay the merchant's MDR, and AI
-          splits bills into legal GST legs so less MDR is charged in the first place.
+          Customers pay the full bill with one QR. While they pay, the Soundbox plays a short ad from a nearby business. That ad money
+          first pays the merchant's Soundbox rental, and everything after that is the merchant's own earnings.
         </p>
         <ul className="mt-6 space-y-3 text-body-md text-white/90">
           {[
-            ['point_of_sale', 'Merchants: AI bill splitting, Soundbox QR, live settlement'],
-            ['campaign', 'Advertisers: create an audio ad in seconds, pay per verified play'],
+            ['point_of_sale', 'Merchants: Soundbox QR, payment announcements, an ad earnings tracker'],
+            ['campaign', 'Advertisers: type a brief in English, get an ad in any of 11 Indian languages, pay per verified play'],
             ['account_balance', 'Double-entry ledger: every rupee accounted for'],
           ].map(([ic, t]) => (
             <li key={t} className="flex items-start gap-3">

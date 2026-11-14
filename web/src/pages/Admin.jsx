@@ -48,19 +48,19 @@ function Kpis({ s }) {
         <Big>{inr(s.gross_paise ?? 0, { decimals: 0 })}</Big>
         <Sub>{s.avg_ticket_paise ? `Avg ticket ${inr(s.avg_ticket_paise, { decimals: 0 })}` : 'No settled orders'}</Sub>
       </Tile>
-      <Tile label="MDR to acquirers" icon="credit_card">
-        <Big>{inr(s.mdr_paise ?? 0)}</Big>
-        <Sub>{s.interchange_pct !== null && s.interchange_pct !== undefined ? `${pct(s.interchange_pct, 3)} of gross` : '—'}</Sub>
+      <Tile label="Ad revenue" icon="campaign">
+        <Big>{inr(s.ad_revenue_paise ?? 0)}</Big>
+        <Sub>{num(s.plays ?? 0)} full ads · {num(s.tag_plays ?? 0)} sponsor lines</Sub>
       </Tile>
-      <Tile label="Covered by sponsors" icon="verified" highlight>
-        <Big light>{inr(s.covered_paise ?? 0)}</Big>
+      <Tile label="Merchant ad earnings" icon="account_balance_wallet" highlight>
+        <Big light>{inr(s.merchant_earnings_paise ?? 0)}</Big>
         <div className="mt-1 inline-flex rounded-full border border-paytm-cyan/40 bg-paytm-cyan/20 px-2 py-0.5 text-[10px] font-bold text-paytm-cyan">
-          {s.coverage_pct !== null && s.coverage_pct !== undefined ? `${pct(s.coverage_pct)} MDR absorbed` : 'No MDR yet'}
+          + {inr(s.rental_paid_by_ads_paise ?? 0)} Soundbox rental paid by ads
         </div>
       </Tile>
-      <Tile label="Paytm spread" icon="hub">
+      <Tile label="Paytm share" icon="hub">
         <Big>{inr(s.platform_paise ?? 0)}</Big>
-        <Sub tone="font-mono font-semibold text-paytm-cyan-dark">{s.spread_pct !== null && s.spread_pct !== undefined ? `${pct(s.spread_pct, 2)} of ad liquidity` : '—'}</Sub>
+        <Sub tone="font-mono font-semibold text-paytm-cyan-dark">{s.ad_revenue_paise ? `${pct(((s.platform_paise ?? 0) / s.ad_revenue_paise) * 100, 0)} of ad revenue` : '—'}</Sub>
       </Tile>
       <Tile label="Verified plays" icon="volume_up">
         <Big>{num(s.plays ?? 0)}</Big>
@@ -194,16 +194,70 @@ function sevTone(s) {
   return 'neutral';
 }
 
+// Advertiser verification queue: the stand-in for Paytm's KYC pipeline until it's connected.
+function KycQueue() {
+  const q = usePoll(() => api.kycQueue('pending'), 10000, []);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState(null);
+  const decide = async (a, action) => {
+    let note = null;
+    if (action === 'reject') {
+      note = window.prompt(`Reason for rejecting ${a.name} (shown to the advertiser):`, 'GSTIN not active / name does not match');
+      if (!note) return;
+    }
+    setBusy(a.id + action);
+    setErr(null);
+    try {
+      await api.kycDecide(a.id, action, note);
+      q.reload?.();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy('');
+    }
+  };
+  const list = q.data || [];
+  return (
+    <Card title="Advertiser verification" actions={<span className="text-xs font-bold text-on-surface-variant">{list.length} pending</span>}>
+      <p className="mb-2 text-body-sm text-on-surface-variant">
+        Ads go live only after GST verification and a ₹200 deposit. Check the GSTIN on the GST portal (active status, legal name matches), then approve.
+      </p>
+      <ErrorNote error={q.error || err} title="Verification" className="mb-2" />
+      {!list.length ? (
+        <div className="py-3 text-center text-xs font-bold text-paytm-navy">No advertisers waiting</div>
+      ) : (
+        <ul className="space-y-2">
+          {list.map((a) => (
+            <li key={a.id} className="rounded-lg border border-outline p-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-label-lg text-paytm-navy">{a.name}</div>
+                  <div className="font-mono text-xs text-on-surface-variant">{a.gstin} · {a.type} · {a.category}</div>
+                  <div className="text-xs text-on-surface-variant">Deposit {inr(a.deposit_paise)} of {inr(a.min_deposit_paise)}</div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button type="button" className="btn btn-navy btn-sm" disabled={!!busy} onClick={() => decide(a, 'approve')}>Approve</button>
+                  <button type="button" className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => decide(a, 'reject')}>Reject</button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 function Flags({ flags, error }) {
   return (
     <Card title="Sentinel flags" actions={<span className="flex items-center gap-1.5 text-xs font-bold text-on-surface-variant">{flags ? `${flags.length} recent` : ''}</span>}>
-      <p className="-mt-2 mb-3 text-xs text-on-surface-variant">Compliance and fraud gate on every split and payment</p>
+      <p className="-mt-2 mb-3 text-xs text-on-surface-variant">Fraud checks on every payment and ad play</p>
       <ErrorNote error={error} title="Could not load flags" className="mb-2" />
       {!flags?.length ? (
         <div className="flex min-h-[110px] flex-col items-center justify-center gap-2 rounded-xl border border-outline-variant bg-surface-subtle p-4 text-center">
           <Icon name="verified_user" className="text-[32px] text-success-green" />
           <div className="text-xs font-bold text-paytm-navy">No flags raised</div>
-          <p className="text-[11px] text-on-surface-variant">Blocked or suspicious splits and payments appear here.</p>
+          <p className="text-[11px] text-on-surface-variant">Self-payments and other suspicious activity appear here.</p>
         </div>
       ) : (
         <ul className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
@@ -385,7 +439,7 @@ function Accounts({ merchants, advertisers, now }) {
                   <th>Merchant</th>
                   <th>GSTIN</th>
                   <th>Soundboxes</th>
-                  <th>Split</th>
+                  <th className="text-right">Ad earnings</th>
                   <th>Joined</th>
                 </tr>
               </thead>
@@ -400,7 +454,7 @@ function Accounts({ merchants, advertisers, now }) {
                     </td>
                     <td className="font-mono text-[11px]">{m.gstin}</td>
                     <td>{m.device_ids?.length ?? 0}</td>
-                    <td>{m.factorization_enabled ? <Pill tone="good">on</Pill> : <Pill tone="muted">off</Pill>}</td>
+                    <td className="text-right font-mono">{inr(m.stats?.earnings_lifetime_paise ?? 0)}</td>
                     <td className="whitespace-nowrap text-on-surface-variant">{m.created_at ? ago(m.created_at, now) : '—'}</td>
                   </tr>
                 ))}
@@ -449,10 +503,8 @@ function Accounts({ merchants, advertisers, now }) {
 
 function Guarantee({ s }) {
   const settled = s.settled_orders ?? 0;
-  const mdr = s.mdr_paise ?? 0;
-  const covered = s.covered_paise ?? 0;
   const gross = s.gross_paise ?? 0;
-  const deduction = gross > 0 ? ((mdr - covered) / gross) * 100 : null;
+  const toMerchants = (s.merchant_earnings_paise ?? 0) + (s.rental_paid_by_ads_paise ?? 0);
   return (
     <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-outline bg-surface-high p-4 shadow-sm md:flex-row">
       <div className="flex items-center gap-3">
@@ -462,21 +514,19 @@ function Guarantee({ s }) {
         <div>
           <div className="text-sm font-extrabold text-paytm-navy">
             {settled === 0
-              ? 'SoundShare settlement guarantee: no settled orders yet'
-              : covered >= mdr
-                ? `SoundShare settlement guarantee: merchants kept 100% of ${inr(gross)} across ${num(settled)} settled order${settled === 1 ? '' : 's'}`
-                : `Merchants kept ${pct(100 - (deduction ?? 0), 2)} of ${inr(gross)} across ${num(settled)} settled orders`}
+              ? 'No paid bills yet'
+              : `Merchants received the full ${inr(gross)} across ${num(settled)} paid bill${settled === 1 ? '' : 's'}`}
           </div>
           <div className="text-xs text-on-surface-variant">
             {settled === 0
-              ? 'Once orders settle, this shows how much MDR acquirers received and how much of it sponsors covered.'
-              : `Acquirers received their full MDR of ${inr(mdr)}; AdPulse sponsors covered ${inr(covered)}${mdr > covered ? `, leaving ${inr(mdr - covered)} to merchants` : ''}.`}
+              ? 'Once bills are paid, this shows what counter ads earned merchants.'
+              : `Counter ads added ${inr(toMerchants)} for merchants: ${inr(s.rental_paid_by_ads_paise ?? 0)} towards Soundbox rental and ${inr(s.merchant_earnings_paise ?? 0)} as earnings.`}
           </div>
         </div>
       </div>
-      {deduction !== null && (
-        <div className={`shrink-0 rounded-lg border bg-white px-3.5 py-1.5 font-mono text-xs font-bold shadow-sm ${deduction <= 0 ? 'border-paytm-cyan/30 text-paytm-navy' : 'border-amber-300 text-amber-800'}`}>
-          {deduction <= 0 ? 'No fee to merchants (0.00% deduction)' : `Effective deduction ${pct(deduction, 3)}`}
+      {settled > 0 && (
+        <div className="shrink-0 rounded-lg border border-paytm-cyan/30 bg-white px-3.5 py-1.5 font-mono text-xs font-bold text-paytm-navy shadow-sm">
+          {s.play_verification_pct != null ? `${pct(s.play_verification_pct)} of ads verified played` : 'No ad plays yet'}
         </div>
       )}
     </div>
@@ -551,7 +601,7 @@ export default function Admin() {
           </div>
         }
       />
-      <AiWarning what="Bill splitting, catalog classification and ad creation" />
+      <AiWarning what="Bill reading and ad creation" />
       <ErrorNote error={stats.error} title="Could not load stats" />
 
       <Kpis s={s} />
@@ -567,7 +617,7 @@ export default function Admin() {
                 <h2 className="text-lg font-bold text-paytm-navy">Money flow</h2>
                 {orderFilter && <span className="rounded-full border border-outline bg-surface-high px-2.5 py-0.5 font-mono text-xs font-semibold text-paytm-navy">{orderFilter}</span>}
               </div>
-              <p className="text-xs text-on-surface-variant">Customer payments, advertiser top-ups, the sponsor pool and settlement, from the double-entry ledger</p>
+              <p className="text-xs text-on-surface-variant">Customer payments, advertiser top-ups and ad money to merchants, from the double-entry ledger</p>
             </div>
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
@@ -606,6 +656,7 @@ export default function Admin() {
         <Balances balances={balances.data} invariant={s.ledger_invariant_paise} error={balances.error} />
         <Entries entries={entries.data} error={entries.error} filter={orderFilter} />
         <div className="flex min-w-0 flex-col gap-6 lg:col-span-3">
+          <KycQueue />
           <Flags flags={flags.data} error={flags.error} />
           <Devices devices={devices.data} error={devices.error} now={now} />
           <LiveEvents events={events} wsState={wsState} />

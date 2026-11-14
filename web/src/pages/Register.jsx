@@ -47,7 +47,7 @@ export default function Register() {
     confirm: f.confirm !== f.password && 'Passwords do not match.',
     name: !f.name.trim() && 'Required.',
     category: !f.category.trim() && 'Required.',
-    gstin: role === 'merchant' && !GSTIN_RE.test(gstin) && 'GSTIN is 15 characters, e.g. 29ABCDE1234F1Z5.',
+    gstin: !GSTIN_RE.test(gstin) && 'GSTIN is 15 characters, e.g. 27AAPFU0939F1ZV.',
     vpa: role === 'merchant' && !VPA_RE.test(f.vpa.trim()) && 'UPI ID looks like name@bank.',
     location: locRequired && (f.lat === null || f.lng === null) && 'Pick your shop location on the map.',
   };
@@ -72,7 +72,7 @@ export default function Register() {
       if (role === 'merchant') {
         u = await registerMerchant({ ...common, gstin, vpa: f.vpa.trim(), lat: f.lat, lng: f.lng, lang: f.lang });
       } else {
-        u = await registerAdvertiser({ ...common, type: f.type, ...(f.lat !== null ? { lat: f.lat, lng: f.lng } : {}) });
+        u = await registerAdvertiser({ ...common, gstin, type: f.type, ...(f.lat !== null ? { lat: f.lat, lng: f.lng } : {}) });
       }
       navigate(HOME_BY_ROLE[u.role] || '/', { replace: true });
     } catch (ex) {
@@ -135,7 +135,7 @@ export default function Register() {
             <div className="grid grid-cols-2 gap-2">
               {[
                 ['local', 'Local business', 'A shop, gym or clinic near merchants'],
-                ['brand', 'Brand', 'Subvention on your products, any region'],
+                ['brand', 'Brand', 'Product ads, any region'],
               ].map(([v, label, hint]) => (
                 <label key={v} className={`cursor-pointer rounded-xl border p-3 transition-colors ${f.type === v ? 'border-primary bg-surface-tint' : 'border-outline bg-white hover:border-primary/50'}`}>
                   <input type="radio" name="adv-type" className="sr-only" checked={f.type === v} onChange={() => setF((s) => ({ ...s, type: v }))} />
@@ -158,6 +158,16 @@ export default function Register() {
               </datalist>
             </Field>
           </div>
+          {role === 'advertiser' && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="GSTIN (required)" error={show('gstin')}>
+                <input className="input input-lg font-mono uppercase" maxLength={15} value={f.gstin} onChange={set('gstin')} placeholder="15 characters" />
+              </Field>
+              <p className="self-end text-body-sm text-on-surface-variant">
+                Your ads go live after we verify your GSTIN and you deposit at least ₹200. You can set up campaigns meanwhile.
+              </p>
+            </div>
+          )}
           {role === 'merchant' && (
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="GSTIN" error={show('gstin')}>

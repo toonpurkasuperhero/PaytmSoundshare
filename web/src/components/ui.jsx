@@ -34,6 +34,9 @@ const STATUS_TONE = {
   cancelled: 'muted',
   generating: 'info',
   draft: 'neutral',
+  pending_kyc: 'warn',
+  verified: 'good',
+  rejected: 'bad',
   paused: 'muted',
   exhausted: 'warn',
   allow: 'good',
@@ -144,7 +147,7 @@ export function SourceBadge({ source, model, reason, label, className = '' }) {
   }
   if (source === 'single') {
     return (
-      <span className={`pill pill-neutral ${className}`} title="No legal split exists for this bill, or splitting is off">
+      <span className={`pill pill-neutral ${className}`} title="One QR for the full bill">
         <Icon name="receipt" className="text-[13px]" />
         {prefix}Single invoice
       </span>
